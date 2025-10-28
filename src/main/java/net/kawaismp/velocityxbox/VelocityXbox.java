@@ -27,6 +27,7 @@ import net.kawaismp.velocityxbox.command.RegisterCommand;
 import net.kawaismp.velocityxbox.config.ConfigManager;
 import net.kawaismp.velocityxbox.database.DatabaseManager;
 import net.kawaismp.velocityxbox.manager.PlayerLoginManager;
+import net.kawaismp.velocityxbox.util.LastServerCache;
 import net.kawaismp.velocityxbox.util.MessageProvider;
 import org.geysermc.geyser.api.GeyserApi;
 import org.geysermc.geyser.api.connection.GeyserConnection;
@@ -61,6 +62,7 @@ public class VelocityXbox implements EventRegistrar {
     private DatabaseManager databaseManager;
     private PlayerLoginManager loginManager;
     private MessageProvider messageProvider;
+    private LastServerCache lastServerCache;
 
     private volatile boolean geyserInitialized = false;
 
@@ -81,6 +83,7 @@ public class VelocityXbox implements EventRegistrar {
             this.messageProvider = new MessageProvider();
             this.databaseManager = new DatabaseManager(this, configManager);
             this.loginManager = new PlayerLoginManager(this);
+            this.lastServerCache = new LastServerCache(dataDirectory);
 
             // Register with Geyser
             GeyserApi.api().eventBus().register(this, this);
@@ -175,6 +178,10 @@ public class VelocityXbox implements EventRegistrar {
 
         if (databaseManager != null) {
             databaseManager.close();
+        }
+
+        if (lastServerCache != null) {
+            lastServerCache.shutdown();
         }
 
         logger.info("VelocityXbox plugin shut down successfully");
@@ -307,6 +314,13 @@ public class VelocityXbox implements EventRegistrar {
         // Clean up player tasks
         loginManager.cleanupPlayer(playerId);
 
+        // Save last connected server for auto reconnect
+        player.getCurrentServer().ifPresent(server -> {
+            if (loginManager.isLogged(playerId)) {
+                lastServerCache.put(playerId, server.getServerInfo().getName());
+            }
+        });
+
         // Reset login state (unless it's a conflicting login)
         if (event.getLoginStatus() != DisconnectEvent.LoginStatus.CONFLICTING_LOGIN) {
             loginManager.removeLoginState(playerId);
@@ -340,5 +354,10 @@ public class VelocityXbox implements EventRegistrar {
 
     public boolean isGeyserInitialized() {
         return geyserInitialized;
+    }
+
+    // Getter for lastServerCache
+    public LastServerCache getLastServerCache() {
+        return lastServerCache;
     }
 }

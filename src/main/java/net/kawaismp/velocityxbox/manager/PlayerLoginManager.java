@@ -92,7 +92,20 @@ public class PlayerLoginManager {
 
         // Transfer to main server after delay
         plugin.getProxy().getScheduler()
-                .buildTask(plugin, () -> transferToMainServer(player))
+                .buildTask(plugin, () -> {
+                    // On successful login, check for last server cache
+                    String lastServer = plugin.getLastServerCache().getIfValid(playerId);
+                    if (lastServer != null && !lastServer.equalsIgnoreCase(plugin.getConfigManager().getHubServer())) {
+                        plugin.getProxy().getServer(lastServer).ifPresent(server -> {
+                            player.createConnectionRequest(server).connect();
+                        });
+                        plugin.getLastServerCache().remove(playerId);
+                        return;
+                    }
+
+                    // Send player to main server if last server cache is invalid
+                    transferToMainServer(player);
+                })
                 .delay(LOGIN_SOUND_DELAY_MS, TimeUnit.MILLISECONDS)
                 .schedule();
     }
