@@ -1,0 +1,38 @@
+# ============================================
+# VelocityXbox Configuration
+# ============================================
+# Plugin for authenticating Bedrock Edition players
+# with auto-linking to Xbox accounts via Geyser/Floodgate
+# ============================================
+
+# Database Configuration
+# PostgreSQL database connection settings
+database:
+  # Database host address
+  host: localhost
+  # Database port (default PostgreSQL port is 5432)
+  port: 5432
+  # Database name
+  name: postgres
+  # Database username
+  user: postgres
+  # Database password
+  password: password
+
+# General Configuration
+# ============================================
+
+# Maximum number of login attempts before the player is kicked
+# Set to -1 to disable
+max-login-attempts: 5
+
+# Server Configuration
+# ============================================
+
+# Auth server name (as configured in Velocity)
+# Players will be sent here first to authenticate
+auth-server: auth
+
+# Hub server name (as configured in Velocity)
+# Players will be transferred here after successful authentication
+hub-server: hub
