@@ -94,7 +94,7 @@ public class PlayerLoginManager {
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {
                     // On successful login, check for last server cache
-                    String lastServer = plugin.getLastServerCache().getIfValid(playerId);
+                    String lastServer = plugin.getLastServerCache().get(playerId);
                     if (lastServer != null && !lastServer.equalsIgnoreCase(plugin.getConfigManager().getHubServer())) {
                         plugin.getProxy().getServer(lastServer).ifPresent(server -> {
                             player.createConnectionRequest(server).connect();

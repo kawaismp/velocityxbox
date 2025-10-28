@@ -1,259 +1,212 @@
 package net.kawaismp.velocityxbox.util;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Iterator;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/**
+ * Thread-safe cache for tracking player's last connected server with automatic expiry and persistence.
+ */
 public class LastServerCache {
-    private static final Logger LOGGER = Logger.getLogger(LastServerCache.class.getName());
-    private static final long EXPIRY_MILLIS = 60 * 60 * 1000; // 1 hour
-    private static final long DEBOUNCE_DELAY_MS = 1000;
+    private static final Logger LOG = Logger.getLogger(LastServerCache.class.getName());
+    private static final long EXPIRY_MS = TimeUnit.HOURS.toMillis(1);
+    private static final long SAVE_DELAY_MS = 1000;
 
-    private final File cacheFile;
-    private final Gson gson = new Gson();
-    private final Map<UUID, Entry> cache = new HashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread thread = new Thread(r, "LastServerCache-Saver");
-        thread.setDaemon(true);
-        return thread;
-    });
-
-    private final AtomicReference<ScheduledFuture<?>> scheduledSave = new AtomicReference<>();
-    private final Map<UUID, Entry> pendingChanges = new HashMap<>();
-    private final Map<UUID, Boolean> pendingRemovals = new HashMap<>();
-    private volatile boolean isShutdown = false;
-    private long lastCleanupTime = 0;
-    private static final long CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    private final Path cacheFile;
+    private final Path tempFile;
+    private final Gson gson;
+    private final ConcurrentHashMap<UUID, Entry> cache;
+    private final ScheduledExecutorService executor;
+    private final AtomicReference<ScheduledFuture<?>> pendingSave;
+    private final AtomicBoolean dirty;
+    private final AtomicBoolean shutdown;
 
     private static class Entry {
-        String server;
-        long timestamp;
+        final String server;
+        final long timestamp;
 
         Entry(String server, long timestamp) {
             this.server = server;
             this.timestamp = timestamp;
         }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - timestamp >= EXPIRY_MS;
+        }
     }
 
     public LastServerCache(Path dataDirectory) {
-        this.cacheFile = new File(dataDirectory.toFile(), "last_server_cache.json");
+        this.cacheFile = dataDirectory.resolve("last_server_cache.json");
+        this.tempFile = dataDirectory.resolve("last_server_cache.json.tmp");
+        this.gson = new GsonBuilder().setPrettyPrinting().create();
+        this.cache = new ConcurrentHashMap<>();
+        this.executor = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "LastServerCache");
+            t.setDaemon(true);
+            return t;
+        });
+        this.pendingSave = new AtomicReference<>();
+        this.dirty = new AtomicBoolean(false);
+        this.shutdown = new AtomicBoolean(false);
+
         load();
-        schedulePeriodicCleanup();
+        scheduleCleanup();
     }
 
-    public synchronized void put(UUID uuid, String server) {
-        if (isShutdown) {
-            LOGGER.warning("Attempted to put entry after shutdown");
-            return;
-        }
-        pendingChanges.put(uuid, new Entry(server, System.currentTimeMillis()));
-        pendingRemovals.remove(uuid);
+    /**
+     * Records the server a player connected to.
+     */
+    public void put(UUID uuid, String server) {
+        if (shutdown.get()) return;
+
+        cache.put(uuid, new Entry(server, System.currentTimeMillis()));
         scheduleSave();
     }
 
-    public synchronized String getIfValid(UUID uuid) {
-        periodicCleanupIfNeeded();
+    /**
+     * Gets the last server for a player if not expired.
+     * @return server name or null if expired/not found
+     */
+    public String get(UUID uuid) {
         Entry entry = cache.get(uuid);
-        if (entry != null && System.currentTimeMillis() - entry.timestamp < EXPIRY_MILLIS) {
-            return entry.server;
-        }
-        return null;
+        return (entry != null && !entry.isExpired()) ? entry.server : null;
     }
 
-    public synchronized void remove(UUID uuid) {
-        if (isShutdown) {
-            LOGGER.warning("Attempted to remove entry after shutdown");
-            return;
-        }
-        pendingRemovals.put(uuid, true);
-        pendingChanges.remove(uuid);
-        scheduleSave();
-    }
+    /**
+     * Removes a player's cached server.
+     */
+    public void remove(UUID uuid) {
+        if (shutdown.get()) return;
 
-    private synchronized void applyPendingChanges() {
-        // Apply removals first
-        for (UUID uuid : pendingRemovals.keySet()) {
-            cache.remove(uuid);
-        }
-        pendingRemovals.clear();
-
-        // Apply puts
-        for (Map.Entry<UUID, Entry> e : pendingChanges.entrySet()) {
-            cache.put(e.getKey(), e.getValue());
-        }
-        pendingChanges.clear();
-    }
-
-    private void scheduleSave() {
-        if (isShutdown) {
-            return;
-        }
-
-        // Cancel existing scheduled save and schedule a new one (reset debounce timer)
-        ScheduledFuture<?> oldFuture = scheduledSave.get();
-        if (oldFuture != null && !oldFuture.isDone()) {
-            oldFuture.cancel(false);
-        }
-
-        try {
-            ScheduledFuture<?> newFuture = scheduler.schedule(() -> {
-                try {
-                    synchronized (LastServerCache.this) {
-                        if (!isShutdown) {
-                            applyPendingChanges();
-                            save();
-                        }
-                    }
-                } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "Error during scheduled save", e);
-                }
-            }, DEBOUNCE_DELAY_MS, TimeUnit.MILLISECONDS);
-
-            scheduledSave.set(newFuture);
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to schedule save", e);
-            // Fallback: try to save immediately
-            synchronized (this) {
-                applyPendingChanges();
-                save();
-            }
+        if (cache.remove(uuid) != null) {
+            scheduleSave();
         }
     }
 
+    /**
+     * Flushes pending changes and shuts down the cache.
+     */
     public void shutdown() {
-        synchronized (this) {
-            if (isShutdown) {
-                return;
-            }
-            isShutdown = true;
+        if (!shutdown.compareAndSet(false, true)) return;
 
-            // Cancel scheduled save and flush immediately
-            ScheduledFuture<?> future = scheduledSave.get();
-            if (future != null && !future.isDone()) {
-                future.cancel(false);
-            }
+        // Cancel pending save and flush immediately
+        ScheduledFuture<?> future = pendingSave.getAndSet(null);
+        if (future != null) future.cancel(false);
 
-            // Apply any pending changes
-            applyPendingChanges();
+        if (dirty.getAndSet(false)) {
             save();
         }
 
-        // Shutdown scheduler
-        scheduler.shutdown();
+        executor.shutdown();
         try {
-            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
+            executor.awaitTermination(3, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
-            scheduler.shutdownNow();
+            executor.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
 
-    private void load() {
-        if (!cacheFile.exists()) {
-            return;
+    private void scheduleSave() {
+        dirty.set(true);
+
+        // Replace any pending save with a new one (debouncing)
+        ScheduledFuture<?> oldFuture = pendingSave.getAndSet(
+                executor.schedule(this::saveIfDirty, SAVE_DELAY_MS, TimeUnit.MILLISECONDS)
+        );
+
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
         }
+    }
 
-        try (FileReader reader = new FileReader(cacheFile)) {
-            Type type = new TypeToken<Map<String, Entry>>(){}.getType();
-            Map<String, Entry> raw = gson.fromJson(reader, type);
-
-            if (raw != null) {
-                long now = System.currentTimeMillis();
-                for (Map.Entry<String, Entry> e : raw.entrySet()) {
-                    try {
-                        UUID uuid = UUID.fromString(e.getKey());
-                        Entry entry = e.getValue();
-                        // Only load non-expired entries
-                        if (entry != null && now - entry.timestamp < EXPIRY_MILLIS) {
-                            cache.put(uuid, entry);
-                        }
-                    } catch (IllegalArgumentException ex) {
-                        LOGGER.warning("Invalid UUID in cache file: " + e.getKey());
-                    }
-                }
-            }
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to load cache file", e);
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Unexpected error loading cache", e);
+    private void saveIfDirty() {
+        if (dirty.compareAndSet(true, false)) {
+            save();
         }
     }
 
     private void save() {
-        try (FileWriter writer = new FileWriter(cacheFile)) {
-            Map<String, Entry> raw = new HashMap<>();
-            long now = System.currentTimeMillis();
+        if (shutdown.get()) return;
 
-            // Only save non-expired entries
-            for (Map.Entry<UUID, Entry> e : cache.entrySet()) {
-                if (now - e.getValue().timestamp < EXPIRY_MILLIS) {
-                    raw.put(e.getKey().toString(), e.getValue());
+        try {
+            // Build map with only valid entries
+            Map<String, Entry> data = new ConcurrentHashMap<>();
+            cache.forEach((uuid, entry) -> {
+                if (!entry.isExpired()) {
+                    data.put(uuid.toString(), entry);
                 }
-            }
+            });
 
-            gson.toJson(raw, writer);
+            // Write to temp file first (atomic write)
+            String json = gson.toJson(data);
+            Files.writeString(tempFile, json);
+            Files.move(tempFile, cacheFile, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save cache file", e);
+            LOG.log(Level.SEVERE, "Failed to save cache", e);
         }
     }
 
-    private synchronized void cleanUp() {
-        Iterator<Map.Entry<UUID, Entry>> it = cache.entrySet().iterator();
-        long now = System.currentTimeMillis();
-        boolean changed = false;
+    private void load() {
+        if (!Files.exists(cacheFile)) return;
 
-        while (it.hasNext()) {
-            Map.Entry<UUID, Entry> e = it.next();
-            if (now - e.getValue().timestamp >= EXPIRY_MILLIS) {
-                it.remove();
-                changed = true;
-            }
-        }
+        try {
+            String json = Files.readString(cacheFile);
+            Type type = new TypeToken<Map<String, Entry>>(){}.getType();
+            Map<String, Entry> data = gson.fromJson(json, type);
 
-        // Save immediately if entries were removed during cleanup
-        if (changed) {
-            save();
-        }
-
-        lastCleanupTime = now;
-    }
-
-    private void periodicCleanupIfNeeded() {
-        long now = System.currentTimeMillis();
-        if (now - lastCleanupTime >= CLEANUP_INTERVAL_MS) {
-            cleanUp();
-        }
-    }
-
-    private void schedulePeriodicCleanup() {
-        scheduler.scheduleAtFixedRate(() -> {
-            try {
-                synchronized (LastServerCache.this) {
-                    if (!isShutdown) {
-                        cleanUp();
+            if (data != null) {
+                data.forEach((uuidStr, entry) -> {
+                    try {
+                        if (entry != null && !entry.isExpired()) {
+                            cache.put(UUID.fromString(uuidStr), entry);
+                        }
+                    } catch (IllegalArgumentException e) {
+                        LOG.warning("Invalid UUID in cache: " + uuidStr);
                     }
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error during periodic cleanup", e);
+                });
             }
-        }, CLEANUP_INTERVAL_MS, CLEANUP_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        } catch (IOException e) {
+            LOG.log(Level.WARNING, "Failed to load cache", e);
+        }
+    }
+
+    private void cleanup() {
+        if (shutdown.get()) return;
+
+        cache.entrySet().removeIf(e -> e.getValue().isExpired());
+
+        // Save after cleanup to persist the removal
+        if (dirty.compareAndSet(false, true)) {
+            save();
+            dirty.set(false);
+        }
+    }
+
+    private void scheduleCleanup() {
+        executor.scheduleAtFixedRate(() -> {
+            try {
+                cleanup();
+            } catch (Exception e) {
+                LOG.log(Level.SEVERE, "Cleanup failed", e);
+            }
+        }, 5, 5, TimeUnit.MINUTES);
     }
 }
