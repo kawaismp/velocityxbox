@@ -25,13 +25,13 @@ public final class LoginCommand {
                 .requires(commandSource -> commandSource instanceof Player)
                 .executes(context -> {
                     // Show usage when no arguments provided
-                    context.getSource().sendMessage(Component.text("Usage: /login <username> <password>", NamedTextColor.YELLOW));
+                    context.getSource().sendMessage(Component.text("Usage: /login <username> <password>", NamedTextColor.RED));
                     return Command.SINGLE_SUCCESS;
                 })
                 .then(RequiredArgumentBuilder.<CommandSource, String>argument("username", StringArgumentType.string())
                         .executes(context -> {
                             // Show usage when only username provided
-                            context.getSource().sendMessage(Component.text("Usage: /login <username> <password>", NamedTextColor.YELLOW));
+                            context.getSource().sendMessage(Component.text("Usage: /login <username> <password>", NamedTextColor.RED));
                             return Command.SINGLE_SUCCESS;
                         })
                         .then(RequiredArgumentBuilder.<CommandSource, String>argument("password", StringArgumentType.string())

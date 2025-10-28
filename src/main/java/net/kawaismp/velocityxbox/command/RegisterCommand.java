@@ -23,19 +23,19 @@ public final class RegisterCommand {
                 .requires(commandSource -> commandSource instanceof Player)
                 .executes(context -> {
                     // Show usage when no arguments provided
-                    context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.YELLOW));
+                    context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.RED));
                     return Command.SINGLE_SUCCESS;
                 })
                 .then(RequiredArgumentBuilder.<CommandSource, String>argument("username", StringArgumentType.string())
                         .executes(context -> {
                             // Show usage when only username provided
-                            context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.YELLOW));
+                            context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.RED));
                             return Command.SINGLE_SUCCESS;
                         })
                         .then(RequiredArgumentBuilder.<CommandSource, String>argument("password", StringArgumentType.string())
                                 .executes(context -> {
                                     // Show usage when only username and password provided
-                                    context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.YELLOW));
+                                    context.getSource().sendMessage(Component.text("Usage: /register <username> <password> <confirmPassword>", NamedTextColor.RED));
                                     return Command.SINGLE_SUCCESS;
                                 })
                                 .then(RequiredArgumentBuilder.<CommandSource, String>argument("confirmPassword", StringArgumentType.string())
