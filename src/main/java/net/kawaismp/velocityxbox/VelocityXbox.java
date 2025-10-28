@@ -317,7 +317,7 @@ public class VelocityXbox implements EventRegistrar {
         // Save last connected server for auto reconnect
         player.getCurrentServer().ifPresent(server -> {
             if (loginManager.isLogged(playerId)) {
-                lastServerCache.put(playerId, server.getServerInfo().getName());
+                lastServerCache.put(player.getUniqueId(), server.getServerInfo().getName());
             }
         });
 

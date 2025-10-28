@@ -68,6 +68,7 @@ public class PlayerLoginManager {
      */
     public void login(Player player, Account account) {
         UUID playerId = player.getInternalUniqueId();
+        UUID accountId = UUID.fromString(account.getId());
 
         plugin.getLogger().info("Logging in player {} as {}", player.getUsername(), account.getUsername());
 
@@ -79,7 +80,7 @@ public class PlayerLoginManager {
 
         // Update player profile
         GameProfile updatedProfile = new GameProfile(
-                UUID.fromString(account.getId()),
+                accountId,
                 account.getUsername(),
                 player.getGameProfile().getProperties()
         );
@@ -94,12 +95,12 @@ public class PlayerLoginManager {
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {
                     // On successful login, check for last server cache
-                    String lastServer = plugin.getLastServerCache().get(playerId);
+                    String lastServer = plugin.getLastServerCache().get(accountId);
                     if (lastServer != null && !lastServer.equalsIgnoreCase(plugin.getConfigManager().getHubServer())) {
                         plugin.getProxy().getServer(lastServer).ifPresent(server -> {
                             player.createConnectionRequest(server).connect();
                         });
-                        plugin.getLastServerCache().remove(playerId);
+                        plugin.getLastServerCache().remove(accountId);
                         return;
                     }
 
