@@ -25,7 +25,7 @@ import java.util.logging.Logger;
  */
 public class LastServerCache {
     private static final Logger LOG = Logger.getLogger(LastServerCache.class.getName());
-    private static final long EXPIRY_MS = TimeUnit.HOURS.toMillis(1);
+    private static final long EXPIRY_MS = TimeUnit.MINUTES.toMillis(45);
     private static final long SAVE_DELAY_MS = 1000;
 
     private final Path cacheFile;

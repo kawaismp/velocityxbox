@@ -45,6 +45,9 @@ public class MessageProvider {
     private final Component errorInvalidPasswordLength;
     private final Component errorUsernameExists;
 
+    // Player transfer message
+    private final Component playerTransferredLastServer;
+
     public MessageProvider() {
         // Login messages
         this.loginSuccess = createLoginSuccess();
@@ -78,6 +81,9 @@ public class MessageProvider {
         this.errorInvalidUsername = createMessage("Username hanya boleh mengandung huruf, angka, dan garis bawah!", NamedTextColor.RED);
         this.errorInvalidPasswordLength = createMessage("Kata sandi harus terdiri dari minimal 6 karakter!", NamedTextColor.RED);
         this.errorUsernameExists = createMessage("Username sudah terdaftar! Silahkan pilih username lain.", NamedTextColor.RED);
+
+        // Player transfer message
+        this.playerTransferredLastServer = createMessage("Kamu telah dipindahkan secara otomatis ke server terakhir kamu!", NamedTextColor.GREEN);
     }
 
     private Component createMessage(String text, NamedTextColor color) {
@@ -222,6 +228,10 @@ public class MessageProvider {
 
     public Component getErrorUsernameExists() {
         return errorUsernameExists;
+    }
+
+    public Component getPlayerTransferredLastServer() {
+        return playerTransferredLastServer;
     }
 
     public Component createLoginAsMessage(String username) {

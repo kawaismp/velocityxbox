@@ -1,6 +1,7 @@
 package net.kawaismp.velocityxbox.manager;
 
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.TaskStatus;
 import com.velocitypowered.api.util.GameProfile;
@@ -94,18 +95,76 @@ public class PlayerLoginManager {
         // Transfer to main server after delay
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {
-                    // On successful login, check for last server cache
-                    String lastServer = plugin.getLastServerCache().get(accountId);
-                    if (lastServer != null && !lastServer.equalsIgnoreCase(plugin.getConfigManager().getHubServer())) {
-                        plugin.getProxy().getServer(lastServer).ifPresent(server -> {
-                            player.createConnectionRequest(server).connect();
-                        });
-                        plugin.getLastServerCache().remove(accountId);
-                        return;
-                    }
+                    try {
+                        // Verify player is still online
+                        if (!player.isActive() || player.getCurrentServer().isEmpty()) {
+                            plugin.getLogger().warn("Player {} disconnected before transfer could complete", player.getUsername());
+                            return;
+                        }
 
-                    // Send player to main server if last server cache is invalid
-                    transferToMainServer(player);
+                        // Get last server from cache
+                        String lastServer = plugin.getLastServerCache().get(accountId);
+
+                        // Validate last server exists and isn't the hub
+                        if (lastServer != null && !lastServer.isEmpty()) {
+                            String hubServer = plugin.getConfigManager().getHubServer();
+
+                            if (!lastServer.equalsIgnoreCase(hubServer)) {
+                                Optional<RegisteredServer> serverOptional = plugin.getProxy().getServer(lastServer);
+
+                                if (serverOptional.isPresent()) {
+                                    RegisteredServer targetServer = serverOptional.get();
+
+                                    // Check if player is already on the target server
+                                    if (player.getCurrentServer().isPresent() && player.getCurrentServer().get().getServerInfo().getName().equalsIgnoreCase(lastServer)) {
+                                        plugin.getLogger().info("Player {} already on target server: {}", player.getUsername(), lastServer);
+                                        plugin.getLastServerCache().remove(accountId);
+                                        return;
+                                    }
+
+                                    // Attempt connection to last server
+                                    player.createConnectionRequest(targetServer).connect()
+                                            .thenAccept(result -> {
+                                                if (result.isSuccessful()) {
+                                                    player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
+                                                    plugin.getLastServerCache().remove(accountId);
+                                                    plugin.getLogger().info("Successfully transferred {} to last server: {}", player.getUsername(), lastServer);
+                                                } else {
+                                                    // Connection failed, fallback to hub
+                                                    plugin.getLogger().warn("Failed to transfer {} to last server: {} - Reason: {}", player.getUsername(), lastServer, result.getReasonComponent().map(Object::toString).orElse("Unknown"));
+                                                    transferToMainServer(player);
+                                                }
+                                            })
+                                            .exceptionally(throwable -> {
+                                                plugin.getLogger().error("Exception during transfer for {}", player.getUsername(), throwable);
+                                                transferToMainServer(player);
+                                                return null;
+                                            });
+                                    return;
+                                } else {
+                                    // Server not found/registered
+                                    plugin.getLogger().warn("Last server '{}' for player {} is not registered, transferring to hub", lastServer, player.getUsername());
+                                    plugin.getLastServerCache().remove(accountId);
+                                }
+                            } else {
+                                // Last server was hub, so just go to hub
+                                plugin.getLogger().info("Last server for {} was hub, transferring to hub", player.getUsername());
+                                plugin.getLastServerCache().remove(accountId);
+                            }
+                        }
+
+                        // Fallback: Send player to main server
+                        transferToMainServer(player);
+                    } catch (Exception e) {
+                        plugin.getLogger().error("Unexpected error during server transfer for {}", player.getUsername(), e);
+
+                        // Best effort fallback
+                        try {
+                            transferToMainServer(player);
+                        } catch (Exception fallbackError) {
+                            plugin.getLogger().error("Critical: Failed to transfer player to main server", fallbackError);
+                        }
+                    }
                 })
                 .delay(LOGIN_SOUND_DELAY_MS, TimeUnit.MILLISECONDS)
                 .schedule();
@@ -132,6 +191,7 @@ public class PlayerLoginManager {
 
     /**
      * Get login attempts for a player
+     *
      * @param playerId UUID
      * @return int
      */
@@ -141,6 +201,7 @@ public class PlayerLoginManager {
 
     /**
      * Increment login attempts for a player
+     *
      * @param playerId UUID
      */
     public void incrementLoginAttempts(UUID playerId) {
@@ -149,6 +210,7 @@ public class PlayerLoginManager {
 
     /**
      * Reset login attempts for a player
+     *
      * @param playerId UUID
      */
     public void resetLoginAttempts(UUID playerId) {
