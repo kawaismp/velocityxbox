@@ -7,10 +7,7 @@ import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.command.CommandExecuteEvent;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
-import com.velocitypowered.api.event.player.GameProfileRequestEvent;
-import com.velocitypowered.api.event.player.PlayerChatEvent;
-import com.velocitypowered.api.event.player.ServerPostConnectEvent;
-import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.event.player.*;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Dependency;
@@ -302,6 +299,19 @@ public class VelocityXbox implements EventRegistrar {
             if (connection != null) {
                 String xuid = connection.xuid();
                 loginManager.attemptAutoLogin(player, xuid);
+            }
+        }
+    }
+
+    @Subscribe
+    public void onPlayerKicked(final KickedFromServerEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getInternalUniqueId();
+
+        if (!event.kickedDuringServerConnect()) {
+            // Save last connected server for auto reconnect
+            if (loginManager.isLogged(playerId)) {
+                lastServerCache.put(player.getUniqueId(), event.getServer().getServerInfo().getName());
             }
         }
     }
