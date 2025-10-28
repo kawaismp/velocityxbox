@@ -98,71 +98,83 @@ public class PlayerLoginManager {
                     try {
                         // Verify player is still online
                         if (!player.isActive() || player.getCurrentServer().isEmpty()) {
-                            plugin.getLogger().warn("Player {} disconnected before transfer could complete", player.getUsername());
+                            plugin.getLogger().warn("Player {} disconnected before transfer", player.getUsername());
                             return;
                         }
 
                         // Get last server from cache
                         String lastServer = plugin.getLastServerCache().get(accountId);
 
-                        // Validate last server exists and isn't the hub
-                        if (lastServer != null && !lastServer.isEmpty()) {
-                            String hubServer = plugin.getConfigManager().getHubServer();
-
-                            if (!lastServer.equalsIgnoreCase(hubServer)) {
-                                Optional<RegisteredServer> serverOptional = plugin.getProxy().getServer(lastServer);
-
-                                if (serverOptional.isPresent()) {
-                                    RegisteredServer targetServer = serverOptional.get();
-
-                                    // Check if player is already on the target server
-                                    if (player.getCurrentServer().isPresent() && player.getCurrentServer().get().getServerInfo().getName().equalsIgnoreCase(lastServer)) {
-                                        plugin.getLogger().info("Player {} already on target server: {}", player.getUsername(), lastServer);
-                                        plugin.getLastServerCache().remove(accountId);
-                                        return;
-                                    }
-
-                                    // Attempt connection to last server
-                                    player.createConnectionRequest(targetServer).connect()
-                                            .thenAccept(result -> {
-                                                if (result.isSuccessful()) {
-                                                    player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
-                                                    plugin.getLastServerCache().remove(accountId);
-                                                    plugin.getLogger().info("Successfully transferred {} to last server: {}", player.getUsername(), lastServer);
-                                                } else {
-                                                    // Connection failed, fallback to hub
-                                                    plugin.getLogger().warn("Failed to transfer {} to last server: {} - Reason: {}", player.getUsername(), lastServer, result.getReasonComponent().map(Object::toString).orElse("Unknown"));
-                                                    transferToMainServer(player);
-                                                }
-                                            })
-                                            .exceptionally(throwable -> {
-                                                plugin.getLogger().error("Exception during transfer for {}", player.getUsername(), throwable);
-                                                transferToMainServer(player);
-                                                return null;
-                                            });
-                                    return;
-                                } else {
-                                    // Server not found/registered
-                                    plugin.getLogger().warn("Last server '{}' for player {} is not registered, transferring to hub", lastServer, player.getUsername());
-                                    plugin.getLastServerCache().remove(accountId);
-                                }
-                            } else {
-                                // Last server was hub, so just go to hub
-                                plugin.getLogger().info("Last server for {} was hub, transferring to hub", player.getUsername());
-                                plugin.getLastServerCache().remove(accountId);
-                            }
+                        // If no valid last server, go to hub
+                        if (lastServer == null || lastServer.isEmpty()) {
+                            plugin.getLogger().debug("No last server for {}, transferring to hub", player.getUsername());
+                            transferToMainServer(player);
+                            return;
                         }
 
-                        // Fallback: Send player to main server
-                        transferToMainServer(player);
-                    } catch (Exception e) {
-                        plugin.getLogger().error("Unexpected error during server transfer for {}", player.getUsername(), e);
+                        // Check if last server is a special server (hub or auth)
+                        String hubServer = plugin.getConfigManager().getHubServer();
+                        String authServer = plugin.getConfigManager().getAuthServer();
+                        boolean isSpecialServer = (lastServer.equalsIgnoreCase(hubServer)) || (lastServer.equalsIgnoreCase(authServer));
 
-                        // Best effort fallback
+                        if (isSpecialServer) {
+                            plugin.getLogger().info("Last server for {} was special server, transferring to hub", player.getUsername());
+                            plugin.getLastServerCache().remove(accountId);
+                            transferToMainServer(player);
+                            return;
+                        }
+
+                        // Check if player is already on the target server
+                        boolean alreadyOnTarget = player.getCurrentServer()
+                                .map(server -> server.getServerInfo().getName().equalsIgnoreCase(lastServer))
+                                .orElse(false);
+
+                        if (alreadyOnTarget) {
+                            plugin.getLogger().info("Player {} already on target server: {}", player.getUsername(), lastServer);
+                            plugin.getLastServerCache().remove(accountId);
+                            return;
+                        }
+
+                        // Check if the server is registered
+                        Optional<RegisteredServer> serverOptional = plugin.getProxy().getServer(lastServer);
+                        if (serverOptional.isEmpty()) {
+                            plugin.getLogger().warn("Last server '{}' for {} not registered, transferring to hub", lastServer, player.getUsername());
+                            plugin.getLastServerCache().remove(accountId);
+                            transferToMainServer(player);
+                            return;
+                        }
+
+                        // Attempt connection to last server
+                        RegisteredServer targetServer = serverOptional.get();
+                        plugin.getLogger().info("Transferring {} to last server: {}", player.getUsername(), lastServer);
+
+                        player.createConnectionRequest(targetServer).connect()
+                                .thenAccept(result -> {
+                                    if (result.isSuccessful()) {
+                                        player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
+                                        plugin.getLastServerCache().remove(accountId);
+                                        plugin.getLogger().info("Successfully transferred {} to last server: {}", player.getUsername(), lastServer);
+                                    } else {
+                                        String reason = result.getReasonComponent()
+                                                .map(Object::toString)
+                                                .orElse("Unknown");
+                                        plugin.getLogger().warn("Failed to transfer {} to {} - Reason: {}", player.getUsername(), lastServer, reason);
+                                        plugin.getLastServerCache().remove(accountId);
+                                        transferToMainServer(player);
+                                    }
+                                })
+                                .exceptionally(throwable -> {
+                                    plugin.getLogger().error("Exception transferring {} to {}", player.getUsername(), lastServer, throwable);
+                                    plugin.getLastServerCache().remove(accountId);
+                                    transferToMainServer(player);
+                                    return null;
+                                });
+                    } catch (Exception e) {
+                        plugin.getLogger().error("Error during server transfer for {}", player.getUsername(), e);
                         try {
                             transferToMainServer(player);
                         } catch (Exception fallbackError) {
-                            plugin.getLogger().error("Critical: Failed to transfer player to main server", fallbackError);
+                            plugin.getLogger().error("Critical: Failed to transfer {} to main server", player.getUsername(), fallbackError);
                         }
                     }
                 })
