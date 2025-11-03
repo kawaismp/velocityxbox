@@ -34,19 +34,20 @@ public class LoginSessionCache {
     /**
      * Create or update a login session
      */
-    public void createSession(UUID originalUuid, String username, int protocolVersion, InetAddress ipAddress, String accountId) {
+    public void createSession(UUID originalUuid, String username, int protocolVersion, InetAddress ipAddress, String accountId, boolean onlineMode) {
         SessionData sessionData = new SessionData(
             username, 
             protocolVersion, 
             ipAddress, 
             accountId,
+            onlineMode,
             System.currentTimeMillis()
         );
         
         activeSessions.put(originalUuid, sessionData);
         sessionExpirations.remove(originalUuid); // Remove expiration if it exists
         
-        logger.debug("Created login session for {} (UUID: {})", username, originalUuid);
+        logger.debug("Created login session for {} (UUID: {}, onlineMode: {})", username, originalUuid, onlineMode);
     }
     
     /**
@@ -65,7 +66,7 @@ public class LoginSessionCache {
      * Validate and retrieve session if still valid
      * Returns null if session doesn't exist, is expired, or validation fails
      */
-    public SessionData validateSession(UUID originalUuid, int protocolVersion, InetAddress ipAddress) {
+    public SessionData validateSession(UUID originalUuid, int protocolVersion, InetAddress ipAddress, boolean onlineMode) {
         SessionData session = activeSessions.get(originalUuid);
         
         if (session == null) {
@@ -77,6 +78,12 @@ public class LoginSessionCache {
         if (expirationTime != null && System.currentTimeMillis() > expirationTime) {
             removeSession(originalUuid);
             logger.debug("Session expired for UUID: {}", originalUuid);
+            return null;
+        }
+        
+        // Validate online mode
+        if (session.isOnlineMode() != onlineMode) {
+            logger.debug("Online mode mismatch for UUID: {} (expected: {}, got: {})", originalUuid, session.isOnlineMode(), onlineMode);
             return null;
         }
         
@@ -191,13 +198,15 @@ public class LoginSessionCache {
         private final int protocolVersion;
         private final InetAddress ipAddress;
         private final String accountId;
+        private final boolean onlineMode;
         private final long createdAt;
         
-        public SessionData(String username, int protocolVersion, InetAddress ipAddress, String accountId, long createdAt) {
+        public SessionData(String username, int protocolVersion, InetAddress ipAddress, String accountId, boolean onlineMode, long createdAt) {
             this.username = username;
             this.protocolVersion = protocolVersion;
             this.ipAddress = ipAddress;
             this.accountId = accountId;
+            this.onlineMode = onlineMode;
             this.createdAt = createdAt;
         }
         
@@ -215,6 +224,10 @@ public class LoginSessionCache {
         
         public String getAccountId() {
             return accountId;
+        }
+        
+        public boolean isOnlineMode() {
+            return onlineMode;
         }
         
         public long getCreatedAt() {

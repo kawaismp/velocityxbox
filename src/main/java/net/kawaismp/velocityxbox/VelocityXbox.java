@@ -334,7 +334,8 @@ public class VelocityXbox implements EventRegistrar {
             LoginSessionCache.SessionData sessionData = sessionCache.validateSession(
                 originalUuid,
                 player.getProtocolVersion().getProtocol(),
-                player.getRemoteAddress().getAddress()
+                player.getRemoteAddress().getAddress(),
+                player.isOnlineMode()
             );
             
             if (sessionData != null) {
@@ -393,7 +394,8 @@ public class VelocityXbox implements EventRegistrar {
                         loggedInUsername,
                         player.getProtocolVersion().getProtocol(),
                         player.getRemoteAddress().getAddress(),
-                        accountId
+                        accountId,
+                        player.isOnlineMode()
                     );
                     sessionCache.markForExpiration(originalUuid);
                     logger.info("Saved session for player {} (will expire in 10 minutes)", loggedInUsername);
