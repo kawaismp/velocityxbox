@@ -8,13 +8,13 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.Player;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+
 import net.kawaismp.velocityxbox.VelocityXbox;
 import net.kawaismp.velocityxbox.database.model.Account;
-
 import static net.kawaismp.velocityxbox.util.SoundUtil.playErrorSound;
 import static net.kawaismp.velocityxbox.util.SoundUtil.playProcessingSound;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 public final class RegisterCommand {
 
@@ -55,6 +55,13 @@ public final class RegisterCommand {
 
     private static int executeRegisterCommand(CommandSource source, String username, String password, String confirmPassword, VelocityXbox plugin) {
         if (!(source instanceof Player player)) {
+            return Command.SINGLE_SUCCESS;
+        }
+
+        // Check IP registration limit first
+        if (!plugin.getRegistrationIpTracker().canRegister(player.getRemoteAddress().getAddress())) {
+            player.sendMessage(plugin.getMessageProvider().getErrorRegistrationLimitReached());
+            playErrorSound(player);
             return Command.SINGLE_SUCCESS;
         }
 
@@ -144,6 +151,12 @@ public final class RegisterCommand {
     }
 
     private static void handleSuccessfulRegistration(Player player, Account account, VelocityXbox plugin) {
+        // Record the successful registration
+        plugin.getRegistrationIpTracker().recordRegistration(
+            player.getRemoteAddress().getAddress(),
+            account.getUsername()
+        );
+
         // Schedule on main thread
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {

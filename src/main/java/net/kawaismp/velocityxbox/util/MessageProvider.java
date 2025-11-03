@@ -45,6 +45,7 @@ public class MessageProvider {
     private final Component errorInvalidUsername;
     private final Component errorInvalidPasswordLength;
     private final Component errorUsernameExists;
+    private final Component errorRegistrationLimitReached;
 
     // Player transfer message
     private final Component playerTransferredLastServer;
@@ -83,6 +84,7 @@ public class MessageProvider {
         this.errorInvalidUsername = createMessage("Username hanya boleh mengandung huruf, angka, dan garis bawah!", NamedTextColor.RED);
         this.errorInvalidPasswordLength = createMessage("Kata sandi harus terdiri dari minimal 6 karakter!", NamedTextColor.RED);
         this.errorUsernameExists = createMessage("Username sudah terdaftar! Silahkan pilih username lain.", NamedTextColor.RED);
+        this.errorRegistrationLimitReached = createRegistrationLimitReached();
 
         // Player transfer message
         this.playerTransferredLastServer = createMessage("Kamu telah dipindahkan secara otomatis ke server terakhir kamu!", NamedTextColor.GREEN);
@@ -145,6 +147,17 @@ public class MessageProvider {
 
     private Component createLoginTimeout() {
         return createRegisterInfoKicked();
+    }
+
+    private Component createRegistrationLimitReached() {
+        return Component.text("(", NamedTextColor.GRAY)
+                .append(Component.text("!", NamedTextColor.RED))
+                .append(Component.text(") » ", NamedTextColor.GRAY))
+                .append(Component.text("Akun tidak dapat dibuat! Silahkan membuat akun melalui website: ", NamedTextColor.RED))
+                .append(Component.text(REGISTER_URL, NamedTextColor.AQUA)
+                        .decorate(TextDecoration.UNDERLINED)
+                        .clickEvent(ClickEvent.openUrl(REGISTER_URL))
+                        .hoverEvent(HoverEvent.showText(Component.text("Klik untuk membuka halaman registrasi"))));
     }
 
     // Getters
@@ -242,6 +255,10 @@ public class MessageProvider {
 
     public Component getErrorUsernameExists() {
         return errorUsernameExists;
+    }
+
+    public Component getErrorRegistrationLimitReached() {
+        return errorRegistrationLimitReached;
     }
 
     public Component getPlayerTransferredLastServer() {

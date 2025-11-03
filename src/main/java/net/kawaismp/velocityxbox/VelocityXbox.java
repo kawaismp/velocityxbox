@@ -46,6 +46,7 @@ import net.kawaismp.velocityxbox.util.LastServerCache;
 import net.kawaismp.velocityxbox.util.LoginSessionCache;
 import net.kawaismp.velocityxbox.util.MessageProvider;
 import net.kawaismp.velocityxbox.util.PlayerConnectionData;
+import net.kawaismp.velocityxbox.util.RegistrationIpTracker;
 
 @Plugin(
         id = "velocityxbox",
@@ -70,6 +71,7 @@ public class VelocityXbox implements EventRegistrar {
     private LastServerCache lastServerCache;
     private LoginSessionCache sessionCache;
     private PlayerConnectionData connectionData;
+    private RegistrationIpTracker registrationIpTracker;
 
     private volatile boolean geyserInitialized = false;
 
@@ -93,6 +95,7 @@ public class VelocityXbox implements EventRegistrar {
             this.lastServerCache = new LastServerCache(dataDirectory);
             this.sessionCache = new LoginSessionCache(logger);
             this.connectionData = new PlayerConnectionData();
+            this.registrationIpTracker = new RegistrationIpTracker(logger, dataDirectory);
 
             // Register with Geyser
             GeyserApi.api().eventBus().register(this, this);
@@ -169,6 +172,16 @@ public class VelocityXbox implements EventRegistrar {
                 })
                 .repeat(4, TimeUnit.SECONDS)
                 .schedule();
+
+        // Registration IP tracker cleanup task (runs every hour)
+        proxy.getScheduler()
+                .buildTask(this, () -> {
+                    if (registrationIpTracker != null) {
+                        registrationIpTracker.performGlobalCleanup();
+                    }
+                })
+                .repeat(1, TimeUnit.HOURS)
+                .schedule();
     }
 
     @Subscribe
@@ -199,6 +212,10 @@ public class VelocityXbox implements EventRegistrar {
 
         if (connectionData != null) {
             connectionData.clear();
+        }
+
+        if (registrationIpTracker != null) {
+            registrationIpTracker.shutdown();
         }
 
         logger.info("VelocityXbox plugin shut down successfully");
@@ -462,5 +479,10 @@ public class VelocityXbox implements EventRegistrar {
     // Getter for connectionData
     public PlayerConnectionData getConnectionData() {
         return connectionData;
+    }
+
+    // Getter for registrationIpTracker
+    public RegistrationIpTracker getRegistrationIpTracker() {
+        return registrationIpTracker;
     }
 }
