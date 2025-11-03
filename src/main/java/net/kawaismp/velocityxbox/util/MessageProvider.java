@@ -15,6 +15,7 @@ public class MessageProvider {
     // Login messages
     private final Component loginSuccess;
     private final Component autoLoginSuccess;
+    private final Component sessionLoginSuccess;
     private final Component commandDenied;
     private final Component alreadyLoggedIn;
 
@@ -52,6 +53,7 @@ public class MessageProvider {
         // Login messages
         this.loginSuccess = createLoginSuccess();
         this.autoLoginSuccess = createAutoLoginSuccess();
+        this.sessionLoginSuccess = createSessionLoginSuccess();
         this.commandDenied = Component.text("You can only use /login command!", NamedTextColor.RED);
         this.alreadyLoggedIn = Component.text("You are already logged in!", NamedTextColor.RED);
 
@@ -108,6 +110,14 @@ public class MessageProvider {
                 .append(Component.text(" untuk memutuskan tautan akun.", NamedTextColor.GRAY));
     }
 
+    private Component createSessionLoginSuccess() {
+        return Component.text("\n".repeat(15), NamedTextColor.WHITE)
+                .append(Component.text("(", NamedTextColor.GRAY))
+                .append(Component.text("!", NamedTextColor.GREEN))
+                .append(Component.text(") » ", NamedTextColor.GRAY))
+                .append(Component.text("Kamu telah berhasil masuk otomatis dari sesi sebelumnya!", NamedTextColor.GRAY));
+    }
+
     private Component createRegisterInfo() {
         return Component.text("\n".repeat(15), NamedTextColor.WHITE)
                 .append(Component.text("[!] Jika anda belum memiliki akun, silahkan daftar menggunakan /register atau di website ", NamedTextColor.YELLOW))
@@ -144,6 +154,10 @@ public class MessageProvider {
 
     public Component getAutoLoginSuccess() {
         return autoLoginSuccess;
+    }
+
+    public Component getSessionLoginSuccess() {
+        return sessionLoginSuccess;
     }
 
     public Component getCommandDenied() {

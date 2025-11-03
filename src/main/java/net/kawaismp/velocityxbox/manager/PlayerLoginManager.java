@@ -251,7 +251,7 @@ public class PlayerLoginManager {
 
         // Play success sound and show welcome
         playSuccessSound(player);
-        player.sendMessage(plugin.getMessageProvider().getAutoLoginSuccess());
+        player.sendMessage(plugin.getMessageProvider().getSessionLoginSuccess());
         showWelcomeTitle(player, sessionData.getUsername());
 
         // Transfer to main server after delay
