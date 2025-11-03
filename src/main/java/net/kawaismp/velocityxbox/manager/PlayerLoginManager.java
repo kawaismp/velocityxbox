@@ -1,24 +1,30 @@
 package net.kawaismp.velocityxbox.manager;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.TaskStatus;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.proxy.command.builtin.CommandMessages;
+
 import net.kawaismp.velocityxbox.VelocityXbox;
 import net.kawaismp.velocityxbox.database.model.Account;
+import net.kawaismp.velocityxbox.util.LoginSessionCache;
+import static net.kawaismp.velocityxbox.util.SoundUtil.playSuccessSound;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.title.Title;
 import net.kyori.adventure.util.Ticks;
-
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-
-import static net.kawaismp.velocityxbox.util.SoundUtil.playSuccessSound;
 
 public class PlayerLoginManager {
     private static final long LOGIN_TIMEOUT_SECONDS = 180;
@@ -30,6 +36,7 @@ public class PlayerLoginManager {
     private final Set<UUID> loggingInPlayers;
     private final Map<UUID, List<ScheduledTask>> playerTasks;
     private final Map<UUID, Integer> loginAttempts;
+    private final Map<UUID, String> accountIds; // Maps player UUID to account ID string
 
     public PlayerLoginManager(VelocityXbox plugin) {
         this.plugin = plugin;
@@ -37,6 +44,7 @@ public class PlayerLoginManager {
         this.loggingInPlayers = ConcurrentHashMap.newKeySet();
         this.playerTasks = new ConcurrentHashMap<>();
         this.loginAttempts = new ConcurrentHashMap<>();
+        this.accountIds = new ConcurrentHashMap<>();
     }
 
     /**
@@ -78,6 +86,9 @@ public class PlayerLoginManager {
 
         // Add to logged in set
         loggedInPlayers.add(playerId);
+        
+        // Store account ID for session caching
+        accountIds.put(playerId, account.getId());
 
         // Update player profile
         GameProfile updatedProfile = new GameProfile(
@@ -191,6 +202,7 @@ public class PlayerLoginManager {
 
         cleanupPlayer(playerId);
         loggedInPlayers.remove(playerId);
+        accountIds.remove(playerId);
     }
 
     /**
@@ -199,6 +211,127 @@ public class PlayerLoginManager {
     public void removeLoginState(UUID playerId) {
         loggedInPlayers.remove(playerId);
         loggingInPlayers.remove(playerId);
+        accountIds.remove(playerId);
+    }
+
+    /**
+     * Retrieves the account ID associated with the specified player's UUID.
+     *
+     * @param playerId the UUID of the player whose account ID is to be retrieved
+     * @return the account ID as a String, or null if the player is not logged in
+     */
+    public String getAccountId(UUID playerId) {
+        return accountIds.get(playerId);
+    }
+
+    /**
+     * Login player from cached session
+     */
+    public void loginFromSession(Player player, LoginSessionCache.SessionData sessionData) {
+        UUID playerId = player.getInternalUniqueId();
+        
+        plugin.getLogger().info("Logging in player {} from cached session (account ID: {})", sessionData.getUsername(), sessionData.getAccountId());
+
+        // Clean up any existing tasks
+        cleanupPlayer(playerId);
+
+        // Add to logged in set
+        loggedInPlayers.add(playerId);
+        
+        // Store account ID
+        accountIds.put(playerId, sessionData.getAccountId());
+
+        // Update player profile with original username and UUID
+        GameProfile updatedProfile = new GameProfile(
+                UUID.fromString(sessionData.getAccountId()),
+                sessionData.getUsername(),
+                player.getGameProfile().getProperties()
+        );
+        player.setProfile(updatedProfile);
+
+        // Play success sound and show welcome
+        playSuccessSound(player);
+        player.sendMessage(plugin.getMessageProvider().getAutoLoginSuccess());
+        showWelcomeTitle(player, sessionData.getUsername());
+
+        // Transfer to main server after delay
+        plugin.getProxy().getScheduler()
+                .buildTask(plugin, () -> {
+                    try {
+                        if (!player.isActive() || player.getCurrentServer().isEmpty()) {
+                            plugin.getLogger().warn("Player {} disconnected before transfer", player.getUsername());
+                            return;
+                        }
+
+                        // Get last server from cache
+                        UUID accountUuid = UUID.fromString(sessionData.getAccountId());
+                        String lastServer = plugin.getLastServerCache().get(accountUuid);
+
+                        if (lastServer == null || lastServer.isEmpty()) {
+                            plugin.getLogger().debug("No last server for {}, transferring to hub", player.getUsername());
+                            transferToMainServer(player);
+                            return;
+                        }
+
+                        // Check for special servers
+                        String hubServer = plugin.getConfigManager().getHubServer();
+                        String authServer = plugin.getConfigManager().getAuthServer();
+                        boolean isSpecialServer = lastServer.equalsIgnoreCase(hubServer) || lastServer.equalsIgnoreCase(authServer);
+
+                        if (isSpecialServer) {
+                            plugin.getLogger().info("Last server was special, transferring to hub");
+                            plugin.getLastServerCache().remove(accountUuid);
+                            transferToMainServer(player);
+                            return;
+                        }
+
+                        // Check if already on target
+                        boolean alreadyOnTarget = player.getCurrentServer()
+                                .map(server -> server.getServerInfo().getName().equalsIgnoreCase(lastServer))
+                                .orElse(false);
+
+                        if (alreadyOnTarget) {
+                            plugin.getLogger().info("Player {} already on target server", player.getUsername());
+                            plugin.getLastServerCache().remove(accountUuid);
+                            return;
+                        }
+
+                        // Try to connect to last server
+                        Optional<RegisteredServer> serverOpt = plugin.getProxy().getServer(lastServer);
+                        if (serverOpt.isEmpty()) {
+                            plugin.getLogger().warn("Last server '{}' not found, transferring to hub", lastServer);
+                            plugin.getLastServerCache().remove(accountUuid);
+                            transferToMainServer(player);
+                            return;
+                        }
+
+                        RegisteredServer targetServer = serverOpt.get();
+                        plugin.getLogger().info("Transferring {} to last server: {}", player.getUsername(), lastServer);
+
+                        player.createConnectionRequest(targetServer).connect()
+                                .thenAccept(result -> {
+                                    if (result.isSuccessful()) {
+                                        player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
+                                        plugin.getLastServerCache().remove(accountUuid);
+                                    } else {
+                                        plugin.getLogger().warn("Failed to transfer to last server");
+                                        plugin.getLastServerCache().remove(accountUuid);
+                                        transferToMainServer(player);
+                                    }
+                                })
+                                .exceptionally(throwable -> {
+                                    plugin.getLogger().error("Exception transferring to last server", throwable);
+                                    plugin.getLastServerCache().remove(accountUuid);
+                                    transferToMainServer(player);
+                                    return null;
+                                });
+                    } catch (Exception e) {
+                        plugin.getLogger().error("Error during server transfer", e);
+                        transferToMainServer(player);
+                    }
+                })
+                .delay(LOGIN_SOUND_DELAY_MS, TimeUnit.MILLISECONDS)
+                .schedule();
     }
 
     /**
@@ -399,6 +532,7 @@ public class PlayerLoginManager {
         loggedInPlayers.clear();
         loggingInPlayers.clear();
         loginAttempts.clear();
+        accountIds.clear();
 
         plugin.getLogger().info("PlayerLoginManager shut down successfully");
     }
