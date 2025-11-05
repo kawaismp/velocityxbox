@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 public class DatabaseManager {
     private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE username = ?";
-    private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, xbox_user_id, discord_id FROM accounts WHERE id = ?";
+    private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE id = ?";
     private static final String QUERY_GET_ACCOUNT_BY_XUID = "SELECT id, username, discord_id FROM accounts WHERE xbox_user_id = ?";
     private static final String QUERY_GET_ACCOUNT_BY_DISCORD_ID = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE discord_id = ?";
     private static final String QUERY_COUNT_ACCOUNTS_BY_DISCORD_ID = "SELECT COUNT(*) FROM accounts WHERE discord_id = ?";
@@ -122,6 +122,35 @@ public class DatabaseManager {
                 }
             } catch (SQLException e) {
                 logger.error("Error fetching account by username: {}", username, e);
+                throw new RuntimeException("Database query failed", e);
+            }
+            return Optional.empty();
+        }, executor);
+    }
+
+    /**
+     * Get account by account ID (async)
+     */
+    public CompletableFuture<Optional<Account>> getAccountById(String accountId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(QUERY_GET_ACCOUNT_BY_ID)) {
+
+                stmt.setObject(1, UUID.fromString(accountId));
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return Optional.of(new Account(
+                                rs.getString("id"),
+                                rs.getString("username"),
+                                rs.getString("password_hash"),
+                                rs.getString("xbox_user_id"),
+                                rs.getString("discord_id")
+                        ));
+                    }
+                }
+            } catch (SQLException e) {
+                logger.error("Error fetching account by ID: {}", accountId, e);
                 throw new RuntimeException("Database query failed", e);
             }
             return Optional.empty();

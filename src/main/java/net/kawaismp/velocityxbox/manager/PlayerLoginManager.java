@@ -30,6 +30,8 @@ public class PlayerLoginManager {
     private static final long LOGIN_TIMEOUT_SECONDS = 180;
     private static final long REMINDER_INTERVAL_SECONDS = 4;
     private static final long LOGIN_SOUND_DELAY_MS = 500;
+    private static final long VERIFICATION_REMINDER_INTERVAL_SECONDS = 30;
+    private static final int VERIFICATION_REMINDER_COUNT = 2; // Send 3 reminders
 
     private final VelocityXbox plugin;
     private final Set<UUID> loggedInPlayers;
@@ -37,6 +39,7 @@ public class PlayerLoginManager {
     private final Map<UUID, List<ScheduledTask>> playerTasks;
     private final Map<UUID, Integer> loginAttempts;
     private final Map<UUID, String> accountIds; // Maps player UUID to account ID string
+    private final Map<UUID, Integer> verificationReminderCount; // Track verification reminder count per player
 
     public PlayerLoginManager(VelocityXbox plugin) {
         this.plugin = plugin;
@@ -45,6 +48,7 @@ public class PlayerLoginManager {
         this.playerTasks = new ConcurrentHashMap<>();
         this.loginAttempts = new ConcurrentHashMap<>();
         this.accountIds = new ConcurrentHashMap<>();
+        this.verificationReminderCount = new ConcurrentHashMap<>();
     }
 
     /**
@@ -102,6 +106,9 @@ public class PlayerLoginManager {
         playSuccessSound(player);
 
         showWelcomeTitle(player, account.username());
+
+        // Start verification reminder task if account is not verified
+        startVerificationReminderTask(player, account);
 
         // Transfer to main server after delay
         plugin.getProxy().getScheduler()
@@ -212,6 +219,7 @@ public class PlayerLoginManager {
         loggedInPlayers.remove(playerId);
         loggingInPlayers.remove(playerId);
         accountIds.remove(playerId);
+        verificationReminderCount.remove(playerId);
     }
 
     /**
@@ -253,6 +261,21 @@ public class PlayerLoginManager {
         playSuccessSound(player);
         player.sendMessage(plugin.getMessageProvider().getSessionLoginSuccess());
         showWelcomeTitle(player, sessionData.getUsername());
+
+        // Fetch account data to check verification status
+        plugin.getDatabaseManager().getAccountById(sessionData.getAccountId())
+                .thenAccept(accountOpt -> {
+                    accountOpt.ifPresent(account -> {
+                        // Schedule on main thread to start verification reminder if needed
+                        plugin.getProxy().getScheduler()
+                                .buildTask(plugin, () -> startVerificationReminderTask(player, account))
+                                .schedule();
+                    });
+                })
+                .exceptionally(ex -> {
+                    plugin.getLogger().error("Error fetching account for verification check", ex);
+                    return null;
+                });
 
         // Transfer to main server after delay
         plugin.getProxy().getScheduler()
@@ -429,6 +452,7 @@ public class PlayerLoginManager {
      */
     public void cleanupPlayer(UUID playerId) {
         loginAttempts.remove(playerId);
+        verificationReminderCount.remove(playerId);
 
         List<ScheduledTask> tasks = playerTasks.remove(playerId);
         if (tasks != null) {
@@ -515,6 +539,50 @@ public class PlayerLoginManager {
     }
 
     /**
+     * Start verification reminder task for unverified accounts
+     */
+    public void startVerificationReminderTask(Player player, Account account) {
+        // Only send reminders if account is not verified
+        if (account.hasLinkedDiscord()) {
+            plugin.getLogger().debug("Account {} is already verified, skipping verification reminders", account.username());
+            return;
+        }
+
+        UUID playerId = player.getInternalUniqueId();
+        verificationReminderCount.put(playerId, 0);
+
+        plugin.getLogger().info("Starting verification reminder task for player {} (unverified account)", player.getUsername());
+
+        ScheduledTask reminderTask = plugin.getProxy().getScheduler()
+                .buildTask(plugin, () -> {
+                    // Check if player is still online and logged in
+                    if (!player.isActive() || !isLogged(playerId)) {
+                        return;
+                    }
+
+                    int count = verificationReminderCount.getOrDefault(playerId, 0);
+
+                    // Stop after sending 3 reminders (at 0s, 10s, 20s = 30 seconds total)
+                    if (count >= VERIFICATION_REMINDER_COUNT) {
+                        plugin.getLogger().debug("Verification reminder limit reached for player {}", player.getUsername());
+                        return;
+                    }
+
+                    // Send verification reminder
+                    player.sendMessage(plugin.getMessageProvider().getVerificationReminder());
+                    verificationReminderCount.put(playerId, count + 1);
+
+                    plugin.getLogger().debug("Sent verification reminder #{} to player {}", count + 1, player.getUsername());
+                })
+                .delay(5, TimeUnit.SECONDS) // Initial delay before first reminder
+                .repeat(VERIFICATION_REMINDER_INTERVAL_SECONDS, TimeUnit.SECONDS)
+                .schedule();
+
+        // Add to player tasks for cleanup
+        playerTasks.computeIfAbsent(playerId, k -> new ArrayList<>()).add(reminderTask);
+    }
+
+    /**
      * Shutdown manager and cleanup all tasks
      */
     public void shutdown() {
@@ -533,6 +601,7 @@ public class PlayerLoginManager {
         loggingInPlayers.clear();
         loginAttempts.clear();
         accountIds.clear();
+        verificationReminderCount.clear();
 
         plugin.getLogger().info("PlayerLoginManager shut down successfully");
     }

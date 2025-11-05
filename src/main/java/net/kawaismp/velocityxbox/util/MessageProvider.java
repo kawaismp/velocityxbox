@@ -9,8 +9,8 @@ import net.kyori.adventure.text.format.TextDecoration;
 public class MessageProvider {
     private static final String WEBSITE_URL = "https://kawaismp.net";
     private static final String REGISTER_URL = "https://kawaismp.net/register";
-    private static final String DISCORD_URL = "https://discord.com/invite/PXafvVujt3";
-    private static final String DISCORD_DISPLAY = "https://discord.gg/PXafvVujt3";
+    private static final String DISCORD_URL = "https://kawaismp.net/discord";
+    private static final String DISCORD_DISPLAY = "kawaismp.net/discord";
 
     // Login messages
     private final Component loginSuccess;
@@ -50,6 +50,9 @@ public class MessageProvider {
     // Player transfer message
     private final Component playerTransferredLastServer;
 
+    // Verification reminder messages
+    private final Component verificationReminder;
+
     public MessageProvider() {
         // Login messages
         this.loginSuccess = createLoginSuccess();
@@ -88,6 +91,9 @@ public class MessageProvider {
 
         // Player transfer message
         this.playerTransferredLastServer = createMessage("Kamu telah dipindahkan secara otomatis ke server terakhir kamu!", NamedTextColor.GREEN);
+
+        // Verification reminder message
+        this.verificationReminder = createVerificationReminder();
     }
 
     private Component createMessage(String text, NamedTextColor color) {
@@ -158,6 +164,70 @@ public class MessageProvider {
                         .decorate(TextDecoration.UNDERLINED)
                         .clickEvent(ClickEvent.openUrl(REGISTER_URL))
                         .hoverEvent(HoverEvent.showText(Component.text("Klik untuk membuka halaman registrasi"))));
+    }
+
+    private Component createVerificationReminder() {
+        return Component.empty()
+                .append(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GRAY, TextDecoration.STRIKETHROUGH))
+                .append(Component.text("\n\n"))
+                .append(Component.text("⚠ ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("VERIFIKASI AKUN DIPERLUKAN", NamedTextColor.GOLD, TextDecoration.BOLD))
+                .append(Component.text(" ⚠", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("\n\n"))
+                .append(Component.text("Akun kamu belum terverifikasi! Gunakan perintah ", NamedTextColor.YELLOW))
+                .append(Component.text("/link", NamedTextColor.AQUA, TextDecoration.BOLD)
+                        .clickEvent(ClickEvent.suggestCommand("/link"))
+                        .hoverEvent(HoverEvent.showText(Component.text("Klik untuk menyalin perintah"))))
+                .append(Component.text(" untuk memverifikasi akun kamu dengan Discord.", NamedTextColor.YELLOW))
+                .append(Component.text("\n\n"))
+                .append(Component.text("📌 MENGAPA VERIFIKASI ITU PENTING?", NamedTextColor.GREEN, TextDecoration.BOLD))
+                .append(Component.text("\n\n"))
+                .append(Component.text("1. ", NamedTextColor.WHITE, TextDecoration.BOLD))
+                .append(Component.text("Reset Password", NamedTextColor.GOLD, TextDecoration.BOLD))
+                .append(Component.text("\n   ", NamedTextColor.GRAY))
+                .append(Component.text("Tanpa verifikasi Discord, kamu TIDAK BISA mereset password!", NamedTextColor.RED))
+                .append(Component.text("\n   ", NamedTextColor.GRAY))
+                .append(Component.text("Jika kamu lupa password, akun kamu akan HILANG selamanya.", NamedTextColor.RED))
+                .append(Component.text("\n\n"))
+                .append(Component.text("2. ", NamedTextColor.WHITE, TextDecoration.BOLD))
+                .append(Component.text("Sinkronisasi Stats & Ranks", NamedTextColor.GOLD, TextDecoration.BOLD))
+                .append(Component.text("\n   ", NamedTextColor.GRAY))
+                .append(Component.text("Verifikasi memungkinkan sinkronisasi otomatis:", NamedTextColor.GRAY))
+                .append(Component.text("\n   • ", NamedTextColor.GRAY))
+                .append(Component.text("Rank in-game ↔ Role Discord", NamedTextColor.AQUA))
+                .append(Component.text("\n   • ", NamedTextColor.GRAY))
+                .append(Component.text("Stats, achievements, dan progress", NamedTextColor.AQUA))
+                .append(Component.text("\n   • ", NamedTextColor.GRAY))
+                .append(Component.text("Akses fitur eksklusif komunitas", NamedTextColor.AQUA))
+                .append(Component.text("\n\n"))
+                .append(Component.text("🔗 CARA VERIFIKASI (MUDAH!):", NamedTextColor.GREEN, TextDecoration.BOLD))
+                .append(Component.text("\n\n"))
+                .append(Component.text("Langkah 1: ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("Ketik ", NamedTextColor.WHITE))
+                .append(Component.text("/link", NamedTextColor.AQUA, TextDecoration.BOLD)
+                        .clickEvent(ClickEvent.suggestCommand("/link"))
+                        .hoverEvent(HoverEvent.showText(Component.text("Klik untuk menyalin"))))
+                .append(Component.text(" di chat", NamedTextColor.WHITE))
+                .append(Component.text("\n"))
+                .append(Component.text("Langkah 2: ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("Kamu akan mendapat kode 6 digit", NamedTextColor.WHITE))
+                .append(Component.text("\n"))
+                .append(Component.text("Langkah 3: ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("Join Discord server kami di ", NamedTextColor.WHITE))
+                .append(Component.text(DISCORD_DISPLAY, NamedTextColor.DARK_AQUA, TextDecoration.UNDERLINED)
+                        .clickEvent(ClickEvent.openUrl(DISCORD_URL))
+                        .hoverEvent(HoverEvent.showText(Component.text("Klik untuk join Discord"))))
+                .append(Component.text("\n"))
+                .append(Component.text("Langkah 4: ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("Ketik ", NamedTextColor.WHITE))
+                .append(Component.text("/verify <kode>", NamedTextColor.AQUA, TextDecoration.BOLD))
+                .append(Component.text(" di Discord server", NamedTextColor.WHITE))
+                .append(Component.text("\n"))
+                .append(Component.text("Langkah 5: ", NamedTextColor.YELLOW, TextDecoration.BOLD))
+                .append(Component.text("Selesai! Akun kamu sudah terverifikasi ✓", NamedTextColor.GREEN))
+                .append(Component.text("\n\n"))
+                .append(Component.text("\n"))
+                .append(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.GRAY, TextDecoration.STRIKETHROUGH));
     }
 
     // Getters
@@ -263,6 +333,10 @@ public class MessageProvider {
 
     public Component getPlayerTransferredLastServer() {
         return playerTransferredLastServer;
+    }
+
+    public Component getVerificationReminder() {
+        return verificationReminder;
     }
 
     public Component createLoginAsMessage(String username) {
