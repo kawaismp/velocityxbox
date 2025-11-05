@@ -30,6 +30,7 @@ import java.util.regex.Pattern;
 public class LinkApiServer {
     private static final int MAX_REQUESTS_PER_IP = 10; // Max requests per IP per minute
     private static final int MAX_PARAM_LENGTH = 100; // Max length for parameters
+    private static final int MAX_ACCOUNTS_PER_DISCORD = 3; // Max accounts that can be linked to one Discord account
     private static final Pattern DISCORD_ID_PATTERN = Pattern.compile("^\\d{17,20}$"); // Valid Discord ID
     private static final Pattern CODE_PATTERN = Pattern.compile("^\\d{6}$"); // 6-digit code
     private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{3,16}$"); // Valid Minecraft username
@@ -258,14 +259,13 @@ public class LinkApiServer {
                     return;
                 }
 
-                // Check if Discord ID is already linked to another account
-                plugin.getDatabaseManager().getAccountByDiscordId(discordId)
-                        .thenAccept(existingAccountOpt -> {
-                            if (existingAccountOpt.isPresent()) {
-                                logger.warn("Discord ID {} is already linked to account {} (attempted by {} from {})",
-                                        discordId, existingAccountOpt.get().username(), username, clientIp);
+                // Check if Discord ID has reached the maximum number of linked accounts
+                plugin.getDatabaseManager().countAccountsByDiscordId(discordId)
+                        .thenAccept(accountCount -> {
+                            if (accountCount >= MAX_ACCOUNTS_PER_DISCORD) {
+                                logger.warn("Discord ID {} has reached max linked accounts ({}/{}) (attempted by {} from {})", discordId, accountCount, MAX_ACCOUNTS_PER_DISCORD, username, clientIp);
                                 try {
-                                    sendJsonResponse(resp, 409, createErrorResponse("This Discord account is already linked to another Minecraft account"));
+                                    sendJsonResponse(resp, 409, createErrorResponse("This Discord account has reached the maximum number of linked Minecraft accounts"));
                                 } catch (IOException e) {
                                     logger.error("Error sending response", e);
                                 } finally {
