@@ -18,23 +18,45 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 public class LinkApiServer {
+    private static final int MAX_REQUESTS_PER_IP = 10; // Max requests per IP per minute
+    private static final int MAX_PARAM_LENGTH = 100; // Max length for parameters
+    private static final Pattern DISCORD_ID_PATTERN = Pattern.compile("^\\d{17,20}$"); // Valid Discord ID
+    private static final Pattern CODE_PATTERN = Pattern.compile("^\\d{6}$"); // 6-digit code
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]{3,16}$"); // Valid Minecraft username
+
     private final VelocityXbox plugin;
     private final Logger logger;
     private final Gson gson;
     private Server server;
     private final String secretKey;
+    private final Map<String, RateLimitEntry> rateLimitMap;
+    private final Map<String, Long> discordLinkAttempts; // Track Discord ID link attempts
 
     public LinkApiServer(VelocityXbox plugin) {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
         this.gson = new Gson();
         this.secretKey = plugin.getConfigManager().getLinkApiSecret();
+        this.rateLimitMap = new ConcurrentHashMap<>();
+        this.discordLinkAttempts = new ConcurrentHashMap<>();
+
+        // Validate secret key
+        if (secretKey == null || secretKey.isEmpty() || secretKey.equals("change_me_to_a_secure_random_string")) {
+            throw new IllegalStateException("Link API secret key must be configured! Please set a secure secret in config.yml");
+        }
+        if (secretKey.length() < 16) {
+            logger.warn("Link API secret key is too short! Use at least 16 characters for better security.");
+        }
     }
 
     /**
@@ -99,24 +121,45 @@ public class LinkApiServer {
     private class LinkServlet extends HttpServlet {
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+            handleLinkRequest(req, resp);
+        }
+
+        @Override
+        protected void doPost(HttpServletRequest req, HttpServletResponse resp) {
+            handleLinkRequest(req, resp);
+        }
+
+        private void handleLinkRequest(HttpServletRequest req, HttpServletResponse resp) {
             // Start async context for handling CompletableFuture operations
-            jakarta.servlet.AsyncContext asyncContext = req.startAsync();
-            asyncContext.setTimeout(30000); // 30 second timeout
+            jakarta.servlet.AsyncContext asyncContext = null;
 
             try {
+                asyncContext = req.startAsync();
+                asyncContext.setTimeout(30000); // 30 second timeout
+
+                String clientIp = getClientIp(req);
+
+                // Rate limiting check
+                if (!checkRateLimit(clientIp)) {
+                    logger.warn("Rate limit exceeded for IP: {}", clientIp);
+                    sendJsonResponse(resp, 429, createErrorResponse("Too many requests. Please try again later."));
+                    asyncContext.complete();
+                    return;
+                }
+
                 // Parse query parameters
                 Map<String, String> params = parseQueryParams(req.getQueryString());
 
-                // Validate secret key
+                // Validate secret key with timing-attack protection
                 String providedSecret = params.get("secret_key");
-                if (providedSecret == null || !providedSecret.equals(secretKey)) {
-                    logger.warn("Unauthorized link API request from {}", req.getRemoteAddr());
+                if (!isValidSecretKey(providedSecret)) {
+                    logger.warn("Unauthorized link API request from {}", clientIp);
                     sendJsonResponse(resp, 401, createErrorResponse("Unauthorized: Invalid secret key"));
                     asyncContext.complete();
                     return;
                 }
 
-                // Get required parameters
+                // Get and validate required parameters
                 String code = params.get("code");
                 String discordId = params.get("discord_id");
 
@@ -132,8 +175,25 @@ public class LinkApiServer {
                     return;
                 }
 
+                // Validate input format and length
+                String validationError = validateInputs(code, discordId);
+                if (validationError != null) {
+                    logger.warn("Invalid input from {}: {}", clientIp, validationError);
+                    sendJsonResponse(resp, 400, createErrorResponse(validationError));
+                    asyncContext.complete();
+                    return;
+                }
+
+                // Check Discord ID rate limiting (prevent one Discord account from spamming)
+                if (!checkDiscordRateLimit(discordId)) {
+                    logger.warn("Discord ID {} exceeded rate limit", discordId);
+                    sendJsonResponse(resp, 429, createErrorResponse("Too many link attempts. Please wait before trying again."));
+                    asyncContext.complete();
+                    return;
+                }
+
                 // Process the link request asynchronously
-                processLinkRequest(asyncContext, code, discordId);
+                processLinkRequest(asyncContext, code, discordId, clientIp);
             } catch (Exception e) {
                 logger.error("Error handling link request", e);
                 try {
@@ -141,11 +201,13 @@ public class LinkApiServer {
                 } catch (Exception ex) {
                     logger.error("Error sending error response", ex);
                 }
-                asyncContext.complete();
+                if (asyncContext != null) {
+                    asyncContext.complete();
+                }
             }
         }
 
-        private void processLinkRequest(jakarta.servlet.AsyncContext asyncContext, String code, String discordId) {
+        private void processLinkRequest(jakarta.servlet.AsyncContext asyncContext, String code, String discordId, String clientIp) {
             HttpServletResponse resp = (HttpServletResponse) asyncContext.getResponse();
 
             // Verify the code
@@ -163,7 +225,7 @@ public class LinkApiServer {
             }
 
             String username = usernameOpt.get();
-            logger.debug("Processing Discord link request: code={}, username={}, discordId={}", code, username, discordId);
+            logger.debug("Processing Discord link request: code={}, username={}, discordId={}, ip={}", code, username, discordId, clientIp);
 
             // Get the account from database
             CompletableFuture<Optional<Account>> accountFuture = plugin.getDatabaseManager().getAccountByUsername(username);
@@ -185,7 +247,7 @@ public class LinkApiServer {
 
                 // Check if account already has a Discord ID linked
                 if (account.hasLinkedDiscord()) {
-                    logger.info("Attempt to link already linked account: {} (current Discord: {})", username, account.discordId());
+                    logger.info("Attempt to link already linked account: {} (current Discord: {}) from IP: {}", username, account.discordId(), clientIp);
                     try {
                         sendJsonResponse(resp, 409, createErrorResponse("This account is already linked to a Discord account"));
                     } catch (IOException e) {
@@ -196,32 +258,60 @@ public class LinkApiServer {
                     return;
                 }
 
-                // Link the Discord account
-                plugin.getDatabaseManager().linkDiscordAccount(account.id(), discordId)
-                        .thenAccept(success -> {
-                            try {
-                                if (success) {
-                                    logger.info("Successfully linked Discord account {} to {}", discordId, username);
-
-                                    // Create success response
-                                    JsonObject response = new JsonObject();
-                                    response.addProperty("success", true);
-                                    response.addProperty("minecraft_username", username);
-                                    response.addProperty("message", "Successfully linked!");
-
-                                    sendJsonResponse(resp, 200, response);
-                                } else {
-                                    logger.error("Failed to link Discord account {} to {}", discordId, username);
-                                    sendJsonResponse(resp, 500, createErrorResponse("Failed to link account. Please try again."));
+                // Check if Discord ID is already linked to another account
+                plugin.getDatabaseManager().getAccountByDiscordId(discordId)
+                        .thenAccept(existingAccountOpt -> {
+                            if (existingAccountOpt.isPresent()) {
+                                logger.warn("Discord ID {} is already linked to account {} (attempted by {} from {})",
+                                        discordId, existingAccountOpt.get().username(), username, clientIp);
+                                try {
+                                    sendJsonResponse(resp, 409, createErrorResponse("This Discord account is already linked to another Minecraft account"));
+                                } catch (IOException e) {
+                                    logger.error("Error sending response", e);
+                                } finally {
+                                    asyncContext.complete();
                                 }
-                            } catch (IOException e) {
-                                logger.error("Error sending response", e);
-                            } finally {
-                                asyncContext.complete();
+                                return;
                             }
+
+                            // Link the Discord account
+                            plugin.getDatabaseManager().linkDiscordAccount(account.id(), discordId)
+                                    .thenAccept(success -> {
+                                        try {
+                                            if (success) {
+                                                logger.info("Successfully linked Discord account {} to {} from IP: {}", discordId, username, clientIp);
+
+                                                // Create success response
+                                                JsonObject response = new JsonObject();
+                                                response.addProperty("success", true);
+                                                response.addProperty("minecraft_username", username);
+                                                response.addProperty("message", "Successfully linked!");
+
+                                                sendJsonResponse(resp, 200, response);
+                                            } else {
+                                                logger.error("Failed to link Discord account {} to {} from IP: {}", discordId, username, clientIp);
+                                                sendJsonResponse(resp, 500, createErrorResponse("Failed to link account. Please try again."));
+                                            }
+                                        } catch (IOException e) {
+                                            logger.error("Error sending response", e);
+                                        } finally {
+                                            asyncContext.complete();
+                                        }
+                                    })
+                                    .exceptionally(throwable -> {
+                                        logger.error("Error linking Discord account", throwable);
+                                        try {
+                                            sendJsonResponse(resp, 500, createErrorResponse("Internal server error"));
+                                        } catch (IOException e) {
+                                            logger.error("Error sending response", e);
+                                        } finally {
+                                            asyncContext.complete();
+                                        }
+                                        return null;
+                                    });
                         })
                         .exceptionally(throwable -> {
-                            logger.error("Error linking Discord account", throwable);
+                            logger.error("Error checking Discord ID uniqueness", throwable);
                             try {
                                 sendJsonResponse(resp, 500, createErrorResponse("Internal server error"));
                             } catch (IOException e) {
@@ -281,6 +371,132 @@ public class LinkApiServer {
                 writer.write(jsonResponse);
                 writer.flush();
             }
+        }
+    }
+
+    /**
+     * Get the real client IP address, considering proxies
+     */
+    private String getClientIp(HttpServletRequest req) {
+        String ip = req.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = req.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = req.getRemoteAddr();
+        }
+        // Take first IP if multiple are present
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip != null ? ip : "unknown";
+    }
+
+    /**
+     * Rate limiting check per IP address
+     */
+    private boolean checkRateLimit(String ip) {
+        long now = System.currentTimeMillis();
+
+        // Clean up old entries (entries older than 1 minute)
+        rateLimitMap.entrySet().removeIf(entry ->
+                now - entry.getValue().windowStart > 60000
+        );
+
+        RateLimitEntry entry = rateLimitMap.computeIfAbsent(ip, k -> new RateLimitEntry());
+
+        synchronized (entry) {
+            // Reset window if it's been more than a minute
+            if (now - entry.windowStart > 60000) {
+                entry.windowStart = now;
+                entry.count.set(0);
+            }
+
+            int currentCount = entry.count.incrementAndGet();
+            return currentCount <= MAX_REQUESTS_PER_IP;
+        }
+    }
+
+    /**
+     * Rate limiting for Discord IDs (prevent one Discord account from spamming)
+     */
+    private boolean checkDiscordRateLimit(String discordId) {
+        long now = System.currentTimeMillis();
+
+        // Clean up old entries (older than 5 minutes)
+        discordLinkAttempts.entrySet().removeIf(entry ->
+                now - entry.getValue() > 300000
+        );
+
+        Long lastAttempt = discordLinkAttempts.get(discordId);
+        if (lastAttempt != null && now - lastAttempt < 60000) {
+            // Less than 1 minute since last attempt
+            return false;
+        }
+
+        discordLinkAttempts.put(discordId, now);
+        return true;
+    }
+
+    /**
+     * Timing-safe secret key comparison to prevent timing attacks
+     */
+    private boolean isValidSecretKey(String providedSecret) {
+        if (providedSecret == null || secretKey == null) {
+            return false;
+        }
+
+        try {
+            // Use MessageDigest for constant-time comparison
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] providedHash = digest.digest(providedSecret.getBytes(StandardCharsets.UTF_8));
+
+            digest.reset();
+            byte[] expectedHash = digest.digest(secretKey.getBytes(StandardCharsets.UTF_8));
+
+            // Constant-time comparison
+            return MessageDigest.isEqual(providedHash, expectedHash);
+        } catch (Exception e) {
+            logger.error("Error comparing secret keys", e);
+            return false;
+        }
+    }
+
+    /**
+     * Validate input parameters for format and length
+     */
+    private String validateInputs(String code, String discordId) {
+        // Check parameter lengths
+        if (code.length() > MAX_PARAM_LENGTH) {
+            return "Code parameter too long";
+        }
+        if (discordId.length() > MAX_PARAM_LENGTH) {
+            return "Discord ID parameter too long";
+        }
+
+        // Validate code format (6 digits)
+        if (!CODE_PATTERN.matcher(code).matches()) {
+            return "Invalid code format. Code must be 6 digits";
+        }
+
+        // Validate Discord ID format (17-20 digits)
+        if (!DISCORD_ID_PATTERN.matcher(discordId).matches()) {
+            return "Invalid Discord ID format";
+        }
+
+        return null; // All validations passed
+    }
+
+    /**
+     * Inner class for rate limiting
+     */
+    private static class RateLimitEntry {
+        long windowStart;
+        AtomicInteger count;
+
+        RateLimitEntry() {
+            this.windowStart = System.currentTimeMillis();
+            this.count = new AtomicInteger(0);
         }
     }
 }

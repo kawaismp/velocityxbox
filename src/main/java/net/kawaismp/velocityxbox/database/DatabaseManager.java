@@ -23,6 +23,7 @@ public class DatabaseManager {
     private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE username = ?";
     private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, xbox_user_id, discord_id FROM accounts WHERE id = ?";
     private static final String QUERY_GET_ACCOUNT_BY_XUID = "SELECT id, username, discord_id FROM accounts WHERE xbox_user_id = ?";
+    private static final String QUERY_GET_ACCOUNT_BY_DISCORD_ID = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE discord_id = ?";
     private static final String QUERY_UPDATE_XBOX_LINK = "UPDATE accounts SET xbox_user_id = ? WHERE id = ?";
     private static final String QUERY_UNLINK_XBOX = "UPDATE accounts SET xbox_user_id = NULL WHERE id = ?";
     private static final String QUERY_UPDATE_DISCORD_LINK = "UPDATE accounts SET discord_id = ? WHERE id = ?";
@@ -290,6 +291,35 @@ public class DatabaseManager {
             logger.error("Error verifying password", e);
             return false;
         }
+    }
+
+    /**
+     * Get account by Discord ID (async)
+     */
+    public CompletableFuture<Optional<Account>> getAccountByDiscordId(String discordId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(QUERY_GET_ACCOUNT_BY_DISCORD_ID)) {
+
+                stmt.setLong(1, Long.parseLong(discordId));
+
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return Optional.of(new Account(
+                                rs.getString("id"),
+                                rs.getString("username"),
+                                rs.getString("password_hash"),
+                                rs.getString("xbox_user_id"),
+                                discordId
+                        ));
+                    }
+                }
+            } catch (SQLException e) {
+                logger.error("Error fetching account by Discord ID: {}", discordId, e);
+                throw new RuntimeException("Database query failed", e);
+            }
+            return Optional.empty();
+        }, executor);
     }
 
     /**
