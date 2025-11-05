@@ -21,13 +21,13 @@ public class LinkCommand {
                     CommandSource source = context.getSource();
 
                     if (!(source instanceof Player player)) {
-                        source.sendMessage(Component.text("This command can only be used by players.", NamedTextColor.RED));
+                        source.sendMessage(Component.text("Perintah ini hanya dapat digunakan oleh pemain.", NamedTextColor.RED));
                         return Command.SINGLE_SUCCESS;
                     }
 
                     // Check if player is logged in
                     if (!plugin.getLoginManager().isLogged(player.getInternalUniqueId())) {
-                        player.sendMessage(Component.text("You must be logged in to use this command.", NamedTextColor.RED));
+                        player.sendMessage(Component.text("Anda harus login terlebih dahulu untuk menggunakan perintah ini.", NamedTextColor.RED));
                         return Command.SINGLE_SUCCESS;
                     }
 
@@ -36,7 +36,7 @@ public class LinkCommand {
                     // Check if account is already linked to Discord
                     plugin.getDatabaseManager().getAccountByUsername(username).thenAccept(accountOpt -> {
                         if (accountOpt.isEmpty()) {
-                            player.sendMessage(Component.text("Account not found. Please contact an administrator.", NamedTextColor.RED));
+                            player.sendMessage(Component.text("Akun tidak ditemukan. Silakan hubungi admin.", NamedTextColor.RED));
                             return;
                         }
 
@@ -45,9 +45,9 @@ public class LinkCommand {
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
-                            player.sendMessage(Component.text("Your account is already linked to Discord!", NamedTextColor.RED));
+                            player.sendMessage(Component.text("Akun Anda sudah terhubung dengan Discord!", NamedTextColor.RED));
                             player.sendMessage(Component.empty());
-                            player.sendMessage(Component.text("If you need to unlink your account, please contact an administrator.", NamedTextColor.GRAY));
+                            player.sendMessage(Component.text("Jika Anda perlu memutuskan hubungan akun, silakan hubungi admin.", NamedTextColor.GRAY));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.empty());
@@ -61,10 +61,10 @@ public class LinkCommand {
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
                             player.sendMessage(Component.empty());
-                            player.sendMessage(Component.text("You already have an active verification code!", NamedTextColor.YELLOW));
-                            player.sendMessage(Component.text("Go to KAWAISMP Discord and use: ", NamedTextColor.GRAY).append(Component.text("/verify " + existingCode.get(), NamedTextColor.AQUA)));
+                            player.sendMessage(Component.text("Anda memiliki kode verifikasi yang aktif!", NamedTextColor.YELLOW));
+                            player.sendMessage(Component.text("Pergi ke Discord KAWAISMP dan gunakan: ", NamedTextColor.GRAY).append(Component.text("/verify " + existingCode.get(), NamedTextColor.AQUA)));
                             player.sendMessage(Component.empty());
-                            player.sendMessage(Component.text("Code expires in " + plugin.getConfigManager().getLinkCodeExpiration() + " minutes", NamedTextColor.GRAY));
+                            player.sendMessage(Component.text("Kode akan kadaluarsa dalam " + plugin.getConfigManager().getLinkCodeExpiration() + " menit", NamedTextColor.GRAY));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.empty());
@@ -79,13 +79,13 @@ public class LinkCommand {
                         player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                         player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
-                        player.sendMessage(Component.text("Your verification code is: ", NamedTextColor.GRAY).append(Component.text(code, NamedTextColor.GREEN).decorate(TextDecoration.UNDERLINED)));
+                        player.sendMessage(Component.text("Kode verifikasi Anda adalah: ", NamedTextColor.GRAY).append(Component.text(code, NamedTextColor.GREEN).decorate(TextDecoration.UNDERLINED)));
                         player.sendMessage(Component.empty());
-                        player.sendMessage(Component.text("Steps to link your account:", NamedTextColor.YELLOW));
-                        player.sendMessage(Component.text("  1. Open Discord KAWAISMP", NamedTextColor.GRAY));
-                        player.sendMessage(Component.text("  2. Run the command: ", NamedTextColor.GRAY).append(Component.text("/verify " + code, NamedTextColor.AQUA)));
+                        player.sendMessage(Component.text("Langkah-langkah menghubungkan akun:", NamedTextColor.YELLOW));
+                        player.sendMessage(Component.text("  1. Buka Discord KAWAISMP", NamedTextColor.GRAY));
+                        player.sendMessage(Component.text("  2. Jalankan command: ", NamedTextColor.GRAY).append(Component.text("/verify " + code, NamedTextColor.AQUA)));
                         player.sendMessage(Component.empty());
-                        player.sendMessage(Component.text("⚠ Code expires in " + plugin.getConfigManager().getLinkCodeExpiration() + " minutes", NamedTextColor.GRAY));
+                        player.sendMessage(Component.text("⚠ Kode akan kadaluarsa dalam " + plugin.getConfigManager().getLinkCodeExpiration() + " menit", NamedTextColor.GRAY));
                         player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                         player.sendMessage(Component.empty());
@@ -93,7 +93,7 @@ public class LinkCommand {
                         plugin.getLogger().debug("Generated link code {} for player {}", code, username);
                     }).exceptionally(throwable -> {
                         plugin.getLogger().error("Error checking Discord link status for player {}", username, throwable);
-                        player.sendMessage(Component.text("An error occurred while processing your request. Please try again later.", NamedTextColor.RED));
+                        player.sendMessage(Component.text("Terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi nanti.", NamedTextColor.RED));
                         return null;
                     });
 
@@ -104,4 +104,3 @@ public class LinkCommand {
         return new BrigadierCommand(node);
     }
 }
-
