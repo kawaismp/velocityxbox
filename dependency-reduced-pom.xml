@@ -50,6 +50,10 @@
                   <pattern>dev.dejvokep.boostedyaml</pattern>
                   <shadedPattern>net.kawaismp.velocityxbox.shaded.boostedyaml</shadedPattern>
                 </relocation>
+                <relocation>
+                  <pattern>org.eclipse.jetty</pattern>
+                  <shadedPattern>net.kawaismp.velocityxbox.shaded.jetty</shadedPattern>
+                </relocation>
               </relocations>
               <filters>
                 <filter>

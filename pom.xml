@@ -63,6 +63,10 @@
                                     <pattern>dev.dejvokep.boostedyaml</pattern>
                                     <shadedPattern>net.kawaismp.velocityxbox.shaded.boostedyaml</shadedPattern>
                                 </relocation>
+                                <relocation>
+                                    <pattern>org.eclipse.jetty</pattern>
+                                    <shadedPattern>net.kawaismp.velocityxbox.shaded.jetty</shadedPattern>
+                                </relocation>
                             </relocations>
                             <filters>
                                 <filter>
@@ -139,11 +143,14 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.sun.net.httpserver</groupId>
-            <artifactId>http</artifactId>
-            <version>20070405</version>
-            <scope>system</scope>
-            <systemPath>${java.home}/jmods/jdk.httpserver.jmod</systemPath>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-server</artifactId>
+            <version>11.0.26</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-servlet</artifactId>
+            <version>11.0.26</version>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>

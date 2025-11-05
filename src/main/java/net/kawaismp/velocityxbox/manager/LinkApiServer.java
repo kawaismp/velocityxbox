@@ -2,16 +2,20 @@ package net.kawaismp.velocityxbox.manager;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import net.kawaismp.velocityxbox.VelocityXbox;
 import net.kawaismp.velocityxbox.database.model.Account;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.servlet.ServletContextHandler;
+import org.eclipse.jetty.servlet.ServletHolder;
+import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.slf4j.Logger;
 
 import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
+import java.io.PrintWriter;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -23,7 +27,7 @@ public class LinkApiServer {
     private final VelocityXbox plugin;
     private final Logger logger;
     private final Gson gson;
-    private HttpServer server;
+    private Server server;
     private final String secretKey;
 
     public LinkApiServer(VelocityXbox plugin) {
@@ -34,55 +38,81 @@ public class LinkApiServer {
     }
 
     /**
-     * Start the HTTP server
+     * Start the HTTP server with Jetty for better performance
      */
     public void start() {
         try {
             int port = plugin.getConfigManager().getLinkApiPort();
-            server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
-            server.createContext("/link", new LinkHandler());
-            server.setExecutor(null); // Use default executor
+
+            // Create a thread pool with limited size to prevent resource exhaustion
+            // Jetty requires at least 3 threads (some are reserved for internal operations)
+            QueuedThreadPool threadPool = new QueuedThreadPool();
+            threadPool.setMaxThreads(4);  // Limit max threads
+            threadPool.setMinThreads(3);   // Keep some threads ready
+            threadPool.setIdleTimeout(30000); // 30 second idle timeout
+            threadPool.setName("LinkAPI");
+
+            server = new Server(threadPool);
+
+            // Configure server connector
+            ServerConnector connector = new ServerConnector(server);
+            connector.setPort(port);
+            connector.setHost("0.0.0.0");
+            connector.setIdleTimeout(30000); // 30 second idle timeout
+            connector.setAcceptQueueSize(20); // Limit pending connections
+            server.addConnector(connector);
+
+            // Setup servlet
+            ServletContextHandler context = new ServletContextHandler(ServletContextHandler.NO_SESSIONS);
+            context.setContextPath("/");
+            server.setHandler(context);
+
+            context.addServlet(new ServletHolder(new LinkServlet()), "/link");
+
             server.start();
 
-            logger.info("Link API server started on port {}", port);
-            logger.info("Link API endpoint: http://localhost:{}/link", port);
-        } catch (IOException e) {
+            logger.info("Link API server (Jetty) started on port {}", port);
+        } catch (Exception e) {
             logger.error("Failed to start Link API server", e);
             throw new RuntimeException("Failed to start Link API server", e);
         }
     }
 
     /**
-     * Stop the HTTP server
+     * Stop the HTTP server gracefully
      */
     public void stop() {
         if (server != null) {
             logger.info("Stopping Link API server...");
-            server.stop(0);
+            try {
+                server.stop();
+                server.destroy();
+            } catch (Exception e) {
+                logger.error("Error stopping Link API server", e);
+            }
         }
     }
 
     /**
-     * HTTP handler for /link endpoint
+     * Servlet handler for /link endpoint
      */
-    private class LinkHandler implements HttpHandler {
+    private class LinkServlet extends HttpServlet {
         @Override
-        public void handle(HttpExchange exchange) {
-            // Only accept GET requests
-            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, createErrorResponse("Method not allowed. Use GET."));
-                return;
-            }
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+            // Start async context for handling CompletableFuture operations
+            jakarta.servlet.AsyncContext asyncContext = req.startAsync();
+            asyncContext.setTimeout(30000); // 30 second timeout
 
             try {
                 // Parse query parameters
-                Map<String, String> params = parseQueryParams(exchange.getRequestURI().getQuery());
+                Map<String, String> params = parseQueryParams(req.getQueryString());
 
                 // Validate secret key
                 String providedSecret = params.get("secret_key");
                 if (providedSecret == null || !providedSecret.equals(secretKey)) {
-                    logger.warn("Unauthorized link API request from {}", exchange.getRemoteAddress());
-                    sendResponse(exchange, 401, createErrorResponse("Unauthorized: Invalid secret key"));
+                    logger.warn("Unauthorized link API request from {}", req.getRemoteAddr());
+                    sendJsonResponse(resp, 401, createErrorResponse("Unauthorized: Invalid secret key"));
+                    asyncContext.complete();
                     return;
                 }
 
@@ -91,29 +121,44 @@ public class LinkApiServer {
                 String discordId = params.get("discord_id");
 
                 if (code == null || code.isEmpty()) {
-                    sendResponse(exchange, 400, createErrorResponse("Missing required parameter: code"));
+                    sendJsonResponse(resp, 400, createErrorResponse("Missing required parameter: code"));
+                    asyncContext.complete();
                     return;
                 }
 
                 if (discordId == null || discordId.isEmpty()) {
-                    sendResponse(exchange, 400, createErrorResponse("Missing required parameter: discord_id"));
+                    sendJsonResponse(resp, 400, createErrorResponse("Missing required parameter: discord_id"));
+                    asyncContext.complete();
                     return;
                 }
 
                 // Process the link request asynchronously
-                processLinkRequest(exchange, code, discordId);
+                processLinkRequest(asyncContext, code, discordId);
             } catch (Exception e) {
                 logger.error("Error handling link request", e);
-                sendResponse(exchange, 500, createErrorResponse("Internal server error"));
+                try {
+                    sendJsonResponse(resp, 500, createErrorResponse("Internal server error"));
+                } catch (Exception ex) {
+                    logger.error("Error sending error response", ex);
+                }
+                asyncContext.complete();
             }
         }
 
-        private void processLinkRequest(HttpExchange exchange, String code, String discordId) {
+        private void processLinkRequest(jakarta.servlet.AsyncContext asyncContext, String code, String discordId) {
+            HttpServletResponse resp = (HttpServletResponse) asyncContext.getResponse();
+
             // Verify the code
             Optional<String> usernameOpt = plugin.getLinkCodeManager().verifyAndConsume(code);
 
             if (usernameOpt.isEmpty()) {
-                sendResponse(exchange, 404, createErrorResponse("Invalid or expired code. Generate a new one with /link"));
+                try {
+                    sendJsonResponse(resp, 404, createErrorResponse("Invalid or expired code. Generate a new one with /link"));
+                } catch (IOException e) {
+                    logger.error("Error sending response", e);
+                } finally {
+                    asyncContext.complete();
+                }
                 return;
             }
 
@@ -126,38 +171,75 @@ public class LinkApiServer {
             accountFuture.thenAccept(accountOpt -> {
                 if (accountOpt.isEmpty()) {
                     logger.debug("Account not found for username: {}", username);
-                    sendResponse(exchange, 404, createErrorResponse("Account not found"));
+                    try {
+                        sendJsonResponse(resp, 404, createErrorResponse("Account not found"));
+                    } catch (IOException e) {
+                        logger.error("Error sending response", e);
+                    } finally {
+                        asyncContext.complete();
+                    }
                     return;
                 }
 
                 Account account = accountOpt.get();
 
+                // Check if account already has a Discord ID linked
+                if (account.hasLinkedDiscord()) {
+                    logger.info("Attempt to link already linked account: {} (current Discord: {})", username, account.discordId());
+                    try {
+                        sendJsonResponse(resp, 409, createErrorResponse("This account is already linked to a Discord account"));
+                    } catch (IOException e) {
+                        logger.error("Error sending response", e);
+                    } finally {
+                        asyncContext.complete();
+                    }
+                    return;
+                }
+
                 // Link the Discord account
                 plugin.getDatabaseManager().linkDiscordAccount(account.id(), discordId)
-                    .thenAccept(success -> {
-                        if (success) {
-                            logger.info("Successfully linked Discord account {} to {}", discordId, username);
+                        .thenAccept(success -> {
+                            try {
+                                if (success) {
+                                    logger.info("Successfully linked Discord account {} to {}", discordId, username);
 
-                            // Create success response
-                            JsonObject response = new JsonObject();
-                            response.addProperty("success", true);
-                            response.addProperty("minecraft_username", username);
-                            response.addProperty("message", "Successfully linked!");
+                                    // Create success response
+                                    JsonObject response = new JsonObject();
+                                    response.addProperty("success", true);
+                                    response.addProperty("minecraft_username", username);
+                                    response.addProperty("message", "Successfully linked!");
 
-                            sendResponse(exchange, 200, response);
-                        } else {
-                            logger.error("Failed to link Discord account {} to {}", discordId, username);
-                            sendResponse(exchange, 500, createErrorResponse("Failed to link account. Please try again."));
-                        }
-                    })
-                    .exceptionally(throwable -> {
-                        logger.debug("Error linking Discord account", throwable);
-                        sendResponse(exchange, 500, createErrorResponse("Internal server error"));
-                        return null;
-                    });
+                                    sendJsonResponse(resp, 200, response);
+                                } else {
+                                    logger.error("Failed to link Discord account {} to {}", discordId, username);
+                                    sendJsonResponse(resp, 500, createErrorResponse("Failed to link account. Please try again."));
+                                }
+                            } catch (IOException e) {
+                                logger.error("Error sending response", e);
+                            } finally {
+                                asyncContext.complete();
+                            }
+                        })
+                        .exceptionally(throwable -> {
+                            logger.error("Error linking Discord account", throwable);
+                            try {
+                                sendJsonResponse(resp, 500, createErrorResponse("Internal server error"));
+                            } catch (IOException e) {
+                                logger.error("Error sending response", e);
+                            } finally {
+                                asyncContext.complete();
+                            }
+                            return null;
+                        });
             }).exceptionally(throwable -> {
-                logger.debug("Error fetching account", throwable);
-                sendResponse(exchange, 500, createErrorResponse("Internal server error"));
+                logger.error("Error fetching account", throwable);
+                try {
+                    sendJsonResponse(resp, 500, createErrorResponse("Internal server error"));
+                } catch (IOException e) {
+                    logger.error("Error sending response", e);
+                } finally {
+                    asyncContext.complete();
+                }
                 return null;
             });
         }
@@ -187,20 +269,17 @@ public class LinkApiServer {
             return response;
         }
 
-        private void sendResponse(HttpExchange exchange, int statusCode, JsonObject response) {
-            try (exchange) {
-                String jsonResponse = gson.toJson(response);
-                byte[] bytes = jsonResponse.getBytes(StandardCharsets.UTF_8);
+        private void sendJsonResponse(HttpServletResponse resp, int statusCode, JsonObject response) throws IOException {
+            String jsonResponse = gson.toJson(response);
 
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-                exchange.sendResponseHeaders(statusCode, bytes.length);
+            resp.setStatus(statusCode);
+            resp.setContentType("application/json");
+            resp.setCharacterEncoding("UTF-8");
+            resp.setHeader("Access-Control-Allow-Origin", "*");
 
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(bytes);
-                }
-            } catch (IOException e) {
-                logger.error("Error sending response", e);
+            try (PrintWriter writer = resp.getWriter()) {
+                writer.write(jsonResponse);
+                writer.flush();
             }
         }
     }
