@@ -8,6 +8,8 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.Player;
 import net.kawaismp.velocityxbox.VelocityXbox;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 
@@ -41,7 +43,6 @@ public class LinkCommand {
                         }
 
                         if (accountOpt.get().hasLinkedDiscord()) {
-                            player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
@@ -50,14 +51,12 @@ public class LinkCommand {
                             player.sendMessage(Component.text("Jika Anda perlu memutuskan hubungan akun, silakan hubungi admin.", NamedTextColor.GRAY));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
-                            player.sendMessage(Component.empty());
                             return;
                         }
 
                         // Check if player already has an active code
                         Optional<String> existingCode = plugin.getLinkCodeManager().getActiveCode(username);
                         if (existingCode.isPresent()) {
-                            player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                             player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
                             player.sendMessage(Component.empty());
@@ -67,7 +66,6 @@ public class LinkCommand {
                             player.sendMessage(Component.text("Kode akan kadaluarsa dalam " + plugin.getConfigManager().getLinkCodeExpiration() + " menit", NamedTextColor.GRAY));
                             player.sendMessage(Component.empty());
                             player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
-                            player.sendMessage(Component.empty());
                             return;
                         }
 
@@ -75,20 +73,23 @@ public class LinkCommand {
                         String code = plugin.getLinkCodeManager().createCode(username);
 
                         // Display the code to the player
-                        player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
                         player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("Discord Account Linking", NamedTextColor.GOLD, TextDecoration.BOLD));
-                        player.sendMessage(Component.text("Kode verifikasi Anda adalah: ", NamedTextColor.GRAY).append(Component.text(code, NamedTextColor.GREEN).decorate(TextDecoration.UNDERLINED)));
+                        player.sendMessage(Component.text("Kode verifikasi Anda adalah: ", NamedTextColor.GRAY).append(Component.text(code, NamedTextColor.GREEN)));
                         player.sendMessage(Component.empty());
-                        player.sendMessage(Component.text("Langkah-langkah menghubungkan akun:", NamedTextColor.YELLOW));
+                        player.sendMessage(Component.text("Cara menghubungkan akun:", NamedTextColor.YELLOW));
                         player.sendMessage(Component.text("  1. Buka Discord KAWAISMP", NamedTextColor.GRAY));
-                        player.sendMessage(Component.text("  2. Jalankan command: ", NamedTextColor.GRAY).append(Component.text("/verify " + code, NamedTextColor.AQUA)));
+                        player.sendMessage(Component.text("  2. Jalankan command: ", NamedTextColor.GRAY).append(
+                                Component.text("/verify " + code, NamedTextColor.AQUA)
+                                        .decorate(TextDecoration.UNDERLINED)
+                                        .clickEvent(ClickEvent.copyToClipboard("/verify " + code))
+                                        .hoverEvent(HoverEvent.showText(Component.text("Click to copy", NamedTextColor.YELLOW)))
+                        ));
                         player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("⚠ Kode akan kadaluarsa dalam " + plugin.getConfigManager().getLinkCodeExpiration() + " menit", NamedTextColor.GRAY));
                         player.sendMessage(Component.empty());
                         player.sendMessage(Component.text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", NamedTextColor.WHITE));
-                        player.sendMessage(Component.empty());
 
                         plugin.getLogger().debug("Generated link code {} for player {}", code, username);
                     }).exceptionally(throwable -> {
