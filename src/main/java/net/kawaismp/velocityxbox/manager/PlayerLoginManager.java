@@ -18,6 +18,7 @@ import com.velocitypowered.proxy.command.builtin.CommandMessages;
 
 import net.kawaismp.velocityxbox.VelocityXbox;
 import net.kawaismp.velocityxbox.database.model.Account;
+import net.kawaismp.velocityxbox.event.PlayerLoginSuccessEvent;
 import net.kawaismp.velocityxbox.util.LoginSessionCache;
 import static net.kawaismp.velocityxbox.util.SoundUtil.playSuccessSound;
 import net.kyori.adventure.text.Component;
@@ -80,10 +81,17 @@ public class PlayerLoginManager {
      * Log in player and transfer to main server
      */
     public void login(Player player, Account account) {
+        login(player, account, PlayerLoginSuccessEvent.LoginMethod.PASSWORD);
+    }
+
+    /**
+     * Log in player and transfer to main server with specified login method
+     */
+    public void login(Player player, Account account, PlayerLoginSuccessEvent.LoginMethod loginMethod) {
         UUID playerId = player.getInternalUniqueId();
         UUID accountId = UUID.fromString(account.id());
 
-        plugin.getLogger().info("Logging in player {} as {}", player.getUsername(), account.username());
+        plugin.getLogger().info("Logging in player {} as {} via {}", player.getUsername(), account.username(), loginMethod);
 
         // Clean up any existing tasks
         cleanupPlayer(playerId);
@@ -106,6 +114,14 @@ public class PlayerLoginManager {
         playSuccessSound(player);
 
         showWelcomeTitle(player, account.username());
+
+        // Fire PlayerLoginSuccessEvent
+        PlayerLoginSuccessEvent loginEvent = new PlayerLoginSuccessEvent(
+                player,
+                account,
+                loginMethod
+        );
+        plugin.getProxy().getEventManager().fireAndForget(loginEvent);
 
         // Start verification reminder task if account is not verified
         startVerificationReminderTask(player, account);
@@ -262,10 +278,18 @@ public class PlayerLoginManager {
         player.sendMessage(plugin.getMessageProvider().getSessionLoginSuccess());
         showWelcomeTitle(player, sessionData.getUsername());
 
-        // Fetch account data to check verification status
+        // Fetch account data to check verification status and fire login event
         plugin.getDatabaseManager().getAccountById(sessionData.getAccountId())
                 .thenAccept(accountOpt -> {
                     accountOpt.ifPresent(account -> {
+                        // Fire PlayerLoginSuccessEvent
+                        PlayerLoginSuccessEvent loginEvent = new PlayerLoginSuccessEvent(
+                                player,
+                                account,
+                                PlayerLoginSuccessEvent.LoginMethod.SESSION_CACHE
+                        );
+                        plugin.getProxy().getEventManager().fireAndForget(loginEvent);
+
                         // Schedule on main thread to start verification reminder if needed
                         plugin.getProxy().getScheduler()
                                 .buildTask(plugin, () -> startVerificationReminderTask(player, account))
@@ -490,7 +514,7 @@ public class PlayerLoginManager {
                                                     .append(Component.text(account.username(), NamedTextColor.YELLOW))
                                     );
 
-                                    login(player, account);
+                                    login(player, account, PlayerLoginSuccessEvent.LoginMethod.XBOX_AUTO_LOGIN);
                                 })
                                 .schedule();
                     } else {
