@@ -36,3 +36,19 @@ auth-server: auth
 # Hub server name (as configured in Velocity)
 # Players will be transferred here after successful authentication
 hub-server: hub
+
+# Discord Linking Configuration
+# ============================================
+
+# Port for the HTTP server that handles Discord verification requests
+# Default: 8080 (make sure this port is not used by other services)
+link-api-port: 8080
+
+# Secret key for authenticating Discord bot requests
+# IMPORTANT: Change this to a secure random string and keep it secret!
+# This should match the SECRET_KEY in your Discord bot configuration
+link-api-secret: change_me_to_a_secure_random_string
+
+# Link code expiration time in minutes
+# How long a verification code is valid before it expires
+link-code-expiration: 10

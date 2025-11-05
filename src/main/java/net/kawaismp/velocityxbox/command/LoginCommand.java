@@ -97,7 +97,7 @@ public final class LoginCommand {
                     Account account = accountOpt.get();
 
                     // Verify password
-                    if (!plugin.getDatabaseManager().verifyPassword(rawPassword, account.getPasswordHash())) {
+                    if (!plugin.getDatabaseManager().verifyPassword(rawPassword, account.passwordHash())) {
                         handleAuthFailure(player, plugin);
                         return;
                     }
@@ -138,11 +138,11 @@ public final class LoginCommand {
         String xuid = connection.xuid();
 
         // Check if account already has a linked Xbox account
-        plugin.getDatabaseManager().hasLinkedXbox(account.getId())
+        plugin.getDatabaseManager().hasLinkedXbox(account.id())
                 .thenCompose(alreadyLinked -> {
                     if (!alreadyLinked) {
                         // Link the Xbox account
-                        return plugin.getDatabaseManager().linkXboxAccount(account.getId(), xuid);
+                        return plugin.getDatabaseManager().linkXboxAccount(account.id(), xuid);
                     }
                     return java.util.concurrent.CompletableFuture.completedFuture(true);
                 })
@@ -164,7 +164,7 @@ public final class LoginCommand {
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {
                     player.sendMessage(plugin.getMessageProvider().getLoginSuccess());
-                    player.sendMessage(plugin.getMessageProvider().createLoginAsMessage(account.getUsername()));
+                    player.sendMessage(plugin.getMessageProvider().createLoginAsMessage(account.username()));
 
                     plugin.getLoginManager().setLoggingIn(player.getInternalUniqueId(), false);
                     plugin.getLoginManager().login(player, account);

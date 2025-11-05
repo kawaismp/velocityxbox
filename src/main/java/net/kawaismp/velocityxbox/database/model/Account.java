@@ -1,34 +1,16 @@
 package net.kawaismp.velocityxbox.database.model;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Objects;
 
-public class Account {
-    private final String id;
-    private final String username;
-    private final String passwordHash;
-    private final String xboxUserId;
-
-    public Account(String id, String username, String passwordHash, String xboxUserId) {
+public record Account(String id, String username, String passwordHash, String xboxUserId, String discordId) {
+    public Account(String id, String username, String passwordHash, String xboxUserId, String discordId) {
         this.id = Objects.requireNonNull(id, "Account ID cannot be null");
         this.username = Objects.requireNonNull(username, "Username cannot be null");
         this.passwordHash = passwordHash; // Can be null for auto-login
         this.xboxUserId = xboxUserId; // Can be null if not linked
-    }
-
-    public String getId() {
-        return id;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public String getPasswordHash() {
-        return passwordHash;
-    }
-
-    public String getXboxUserId() {
-        return xboxUserId;
+        this.discordId = discordId; // Can be null if not linked
     }
 
     public boolean hasPasswordHash() {
@@ -37,6 +19,10 @@ public class Account {
 
     public boolean hasLinkedXbox() {
         return xboxUserId != null && !xboxUserId.isEmpty();
+    }
+
+    public boolean hasLinkedDiscord() {
+        return discordId != null && !discordId.isEmpty();
     }
 
     @Override
@@ -52,6 +38,7 @@ public class Account {
         return Objects.hash(id);
     }
 
+    @NotNull
     @Override
     public String toString() {
         return "Account{" +

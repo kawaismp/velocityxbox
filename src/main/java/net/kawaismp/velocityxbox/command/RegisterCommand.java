@@ -154,14 +154,14 @@ public final class RegisterCommand {
         // Record the successful registration
         plugin.getRegistrationIpTracker().recordRegistration(
             player.getRemoteAddress().getAddress(),
-            account.getUsername()
+            account.username()
         );
 
         // Schedule on main thread
         plugin.getProxy().getScheduler()
                 .buildTask(plugin, () -> {
                     player.sendMessage(plugin.getMessageProvider().getRegisterSuccess());
-                    player.sendMessage(plugin.getMessageProvider().createRegisteredAsMessage(account.getUsername()));
+                    player.sendMessage(plugin.getMessageProvider().createRegisteredAsMessage(account.username()));
 
                     plugin.getLoginManager().setLoggingIn(player.getInternalUniqueId(), false);
                     plugin.getLoginManager().login(player, account);

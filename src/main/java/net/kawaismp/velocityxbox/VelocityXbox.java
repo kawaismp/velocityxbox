@@ -36,13 +36,16 @@ import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.api.util.UuidUtils;
 
 import dev.dejvokep.boostedyaml.YamlDocument;
+import net.kawaismp.velocityxbox.command.LinkCommand;
 import net.kawaismp.velocityxbox.command.LoginCommand;
 import net.kawaismp.velocityxbox.command.RegisterCommand;
 import net.kawaismp.velocityxbox.command.UnlinkCommand;
 import net.kawaismp.velocityxbox.config.ConfigManager;
 import net.kawaismp.velocityxbox.database.DatabaseManager;
+import net.kawaismp.velocityxbox.manager.LinkApiServer;
 import net.kawaismp.velocityxbox.manager.PlayerLoginManager;
 import net.kawaismp.velocityxbox.util.LastServerCache;
+import net.kawaismp.velocityxbox.util.LinkCodeManager;
 import net.kawaismp.velocityxbox.util.LoginSessionCache;
 import net.kawaismp.velocityxbox.util.MessageProvider;
 import net.kawaismp.velocityxbox.util.PlayerConnectionData;
@@ -72,6 +75,8 @@ public class VelocityXbox implements EventRegistrar {
     private LoginSessionCache sessionCache;
     private PlayerConnectionData connectionData;
     private RegistrationIpTracker registrationIpTracker;
+    private LinkCodeManager linkCodeManager;
+    private LinkApiServer linkApiServer;
 
     private volatile boolean geyserInitialized = false;
 
@@ -96,9 +101,14 @@ public class VelocityXbox implements EventRegistrar {
             this.sessionCache = new LoginSessionCache(logger);
             this.connectionData = new PlayerConnectionData();
             this.registrationIpTracker = new RegistrationIpTracker(logger, dataDirectory);
+            this.linkCodeManager = new LinkCodeManager(logger, configManager.getLinkCodeExpiration());
+            this.linkApiServer = new LinkApiServer(this);
 
             // Register with Geyser
             GeyserApi.api().eventBus().register(this, this);
+
+            // Start Link API server
+            linkApiServer.start();
 
             // Register commands
             registerCommands();
@@ -156,20 +166,26 @@ public class VelocityXbox implements EventRegistrar {
         BrigadierCommand registerCommand = RegisterCommand.createBrigadierCommand(this);
         commandManager.register(registerMeta, registerCommand);
 
+        // Link command
+        CommandMeta linkMeta = commandManager.metaBuilder("link")
+                .aliases("discordlink")
+                .plugin(this)
+                .build();
+        BrigadierCommand linkCommand = LinkCommand.createBrigadierCommand(this);
+        commandManager.register(linkMeta, linkCommand);
+
         logger.info("Commands registered successfully");
     }
 
     private void startPeriodicTasks() {
         // Login reminder task
         proxy.getScheduler()
-                .buildTask(this, () -> {
-                    proxy.getAllPlayers().forEach(player -> {
-                        UUID playerId = player.getInternalUniqueId();
-                        if (!loginManager.isLoggingIn(playerId) && !loginManager.isLogged(playerId)) {
-                            loginManager.showLoginTitle(player);
-                        }
-                    });
-                })
+                .buildTask(this, () -> proxy.getAllPlayers().forEach(player -> {
+                    UUID playerId = player.getInternalUniqueId();
+                    if (!loginManager.isLoggingIn(playerId) && !loginManager.isLogged(playerId)) {
+                        loginManager.showLoginTitle(player);
+                    }
+                }))
                 .repeat(4, TimeUnit.SECONDS)
                 .schedule();
 
@@ -193,6 +209,14 @@ public class VelocityXbox implements EventRegistrar {
     @Subscribe
     public void onProxyShutdown(final ProxyShutdownEvent event) {
         logger.info("Shutting down VelocityXbox plugin...");
+
+        if (linkApiServer != null) {
+            linkApiServer.stop();
+        }
+
+        if (linkCodeManager != null) {
+            linkCodeManager.shutdown();
+        }
 
         if (loginManager != null) {
             loginManager.shutdown();
@@ -244,13 +268,13 @@ public class VelocityXbox implements EventRegistrar {
                 randomUsername,
                 event.getGameProfile().getProperties()
         );
-        
+
         event.setGameProfile(randomizedProfile);
-        
+
         // Store pending connection data using the randomized username as temporary key
         // We'll transfer this to the actual internal UUID when the player connects
         connectionData.storePending(randomUsername, originalUuid, baseUsername, protocolVersion);
-        
+
         logger.debug("Stored pending connection data for random username: {} (original: {})", randomUsername, baseUsername);
     }
 
@@ -338,7 +362,7 @@ public class VelocityXbox implements EventRegistrar {
         // Transfer pending connection data to permanent storage using actual internal UUID
         String currentUsername = player.getUsername();
         boolean transferred = connectionData.transferFromPending(playerId, currentUsername);
-        
+
         if (transferred) {
             logger.debug("Transferred connection data for player {} (internal UUID: {})", currentUsername, playerId);
         } else {
@@ -349,12 +373,12 @@ public class VelocityXbox implements EventRegistrar {
         UUID originalUuid = connectionData.getOriginalUuid(playerId);
         if (originalUuid != null) {
             LoginSessionCache.SessionData sessionData = sessionCache.validateSession(
-                originalUuid,
-                player.getProtocolVersion().getProtocol(),
-                player.getRemoteAddress().getAddress(),
-                player.isOnlineMode()
+                    originalUuid,
+                    player.getProtocolVersion().getProtocol(),
+                    player.getRemoteAddress().getAddress(),
+                    player.isOnlineMode()
             );
-            
+
             if (sessionData != null) {
                 // Valid session found, auto-login the player
                 logger.info("Auto-logging in player {} from cached session", sessionData.getUsername());
@@ -404,25 +428,23 @@ public class VelocityXbox implements EventRegistrar {
                 // After successful login, player.getUsername() returns the logged-in username
                 // because the profile was updated in login() method
                 String loggedInUsername = player.getUsername();
-                
+
                 if (accountId != null && loggedInUsername != null) {
                     sessionCache.createSession(
-                        originalUuid,
-                        loggedInUsername,
-                        player.getProtocolVersion().getProtocol(),
-                        player.getRemoteAddress().getAddress(),
-                        accountId,
-                        player.isOnlineMode()
+                            originalUuid,
+                            loggedInUsername,
+                            player.getProtocolVersion().getProtocol(),
+                            player.getRemoteAddress().getAddress(),
+                            accountId,
+                            player.isOnlineMode()
                     );
                     sessionCache.markForExpiration(originalUuid);
                     logger.info("Saved session for player {} (will expire in 10 minutes)", loggedInUsername);
                 }
             }
-            
+
             // Save last connected server for auto reconnect
-            player.getCurrentServer().ifPresent(server -> {
-                lastServerCache.put(player.getUniqueId(), server.getServerInfo().getName());
-            });
+            player.getCurrentServer().ifPresent(server -> lastServerCache.put(player.getUniqueId(), server.getServerInfo().getName()));
         }
 
         // Clean up player tasks
@@ -484,5 +506,15 @@ public class VelocityXbox implements EventRegistrar {
     // Getter for registrationIpTracker
     public RegistrationIpTracker getRegistrationIpTracker() {
         return registrationIpTracker;
+    }
+
+    // Getter for linkCodeManager
+    public LinkCodeManager getLinkCodeManager() {
+        return linkCodeManager;
+    }
+
+    // Getter for linkApiServer
+    public LinkApiServer getLinkApiServer() {
+        return linkApiServer;
     }
 }

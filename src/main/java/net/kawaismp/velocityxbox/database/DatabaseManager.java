@@ -20,20 +20,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class DatabaseManager {
-    private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id FROM accounts WHERE username = ?";
-    private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, xbox_user_id FROM accounts WHERE id = ?";
-    private static final String QUERY_GET_ACCOUNT_BY_XUID = "SELECT id, username FROM accounts WHERE xbox_user_id = ?";
+    private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE username = ?";
+    private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, xbox_user_id, discord_id FROM accounts WHERE id = ?";
+    private static final String QUERY_GET_ACCOUNT_BY_XUID = "SELECT id, username, discord_id FROM accounts WHERE xbox_user_id = ?";
     private static final String QUERY_UPDATE_XBOX_LINK = "UPDATE accounts SET xbox_user_id = ? WHERE id = ?";
     private static final String QUERY_UNLINK_XBOX = "UPDATE accounts SET xbox_user_id = NULL WHERE id = ?";
-    private static final String QUERY_CREATE_ACCOUNT = "INSERT INTO accounts (id, username, password_hash, discord_id) VALUES (?, ?, ?, ?) RETURNING id, username, password_hash, xbox_user_id";
+    private static final String QUERY_UPDATE_DISCORD_LINK = "UPDATE accounts SET discord_id = ? WHERE id = ?";
+    private static final String QUERY_CREATE_ACCOUNT = "INSERT INTO accounts (id, username, password_hash, discord_id) VALUES (?, ?, ?, ?) RETURNING id, username, password_hash, xbox_user_id, discord_id";
 
-    private final VelocityXbox plugin;
     private final Logger logger;
     private final ExecutorService executor;
     private HikariDataSource dataSource;
 
     public DatabaseManager(VelocityXbox plugin, ConfigManager config) {
-        this.plugin = plugin;
         this.logger = plugin.getLogger();
         this.executor = Executors.newFixedThreadPool(
                 4,
@@ -114,7 +113,8 @@ public class DatabaseManager {
                                 rs.getString("id"),
                                 rs.getString("username"),
                                 rs.getString("password_hash"),
-                                rs.getString("xbox_user_id")
+                                rs.getString("xbox_user_id"),
+                                rs.getString("discord_id")
                         ));
                     }
                 }
@@ -142,7 +142,8 @@ public class DatabaseManager {
                                 rs.getString("id"),
                                 rs.getString("username"),
                                 null,
-                                xuid
+                                xuid,
+                                rs.getString("discord_id")
                         ));
                     }
                 }
@@ -230,16 +231,14 @@ public class DatabaseManager {
                 // Hash the password using Argon2
                 String passwordHash = hashPassword(rawPassword);
 
-                // Discord ID is null for in-game registrations
-                String discordId = null;
-
                 try (Connection conn = dataSource.getConnection();
                      PreparedStatement stmt = conn.prepareStatement(QUERY_CREATE_ACCOUNT)) {
 
                     stmt.setObject(1, accountId);
                     stmt.setString(2, username);
                     stmt.setString(3, passwordHash);
-                    stmt.setObject(4, discordId, Types.BIGINT);
+                    // Discord ID is null for in-game registrations
+                    stmt.setObject(4, null, Types.BIGINT);
 
                     try (ResultSet rs = stmt.executeQuery()) {
                         if (rs.next()) {
@@ -247,7 +246,8 @@ public class DatabaseManager {
                                     rs.getString("id"),
                                     rs.getString("username"),
                                     rs.getString("password_hash"),
-                                    rs.getString("xbox_user_id")
+                                    rs.getString("xbox_user_id"),
+                                    rs.getString("discord_id")
                             );
                         }
                     }
@@ -290,6 +290,26 @@ public class DatabaseManager {
             logger.error("Error verifying password", e);
             return false;
         }
+    }
+
+    /**
+     * Link Discord account (async)
+     */
+    public CompletableFuture<Boolean> linkDiscordAccount(String accountId, String discordId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(QUERY_UPDATE_DISCORD_LINK)) {
+
+                stmt.setLong(1, Long.parseLong(discordId));
+                stmt.setObject(2, UUID.fromString(accountId));
+
+                int rowsAffected = stmt.executeUpdate();
+                return rowsAffected > 0;
+            } catch (SQLException e) {
+                logger.error("Error linking Discord account {} to {}", discordId, accountId, e);
+                throw new RuntimeException("Database update failed", e);
+            }
+        }, executor);
     }
 
     /**

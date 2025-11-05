@@ -77,9 +77,9 @@ public class PlayerLoginManager {
      */
     public void login(Player player, Account account) {
         UUID playerId = player.getInternalUniqueId();
-        UUID accountId = UUID.fromString(account.getId());
+        UUID accountId = UUID.fromString(account.id());
 
-        plugin.getLogger().info("Logging in player {} as {}", player.getUsername(), account.getUsername());
+        plugin.getLogger().info("Logging in player {} as {}", player.getUsername(), account.username());
 
         // Clean up any existing tasks
         cleanupPlayer(playerId);
@@ -88,12 +88,12 @@ public class PlayerLoginManager {
         loggedInPlayers.add(playerId);
         
         // Store account ID for session caching
-        accountIds.put(playerId, account.getId());
+        accountIds.put(playerId, account.id());
 
         // Update player profile
         GameProfile updatedProfile = new GameProfile(
                 accountId,
-                account.getUsername(),
+                account.username(),
                 player.getGameProfile().getProperties()
         );
         player.setProfile(updatedProfile);
@@ -101,7 +101,7 @@ public class PlayerLoginManager {
         // Play success sound and show messages
         playSuccessSound(player);
 
-        showWelcomeTitle(player, account.getUsername());
+        showWelcomeTitle(player, account.username());
 
         // Transfer to main server after delay
         plugin.getProxy().getScheduler()
@@ -452,7 +452,7 @@ public class PlayerLoginManager {
                     if (accountOpt.isPresent()) {
                         Account account = accountOpt.get();
                         plugin.getLogger().info("Found linked account for player {}: {}",
-                                player.getUsername(), account.getUsername());
+                                player.getUsername(), account.username());
 
                         // Schedule on main thread
                         plugin.getProxy().getScheduler()
@@ -463,7 +463,7 @@ public class PlayerLoginManager {
                                                     .append(Component.text("!", NamedTextColor.AQUA))
                                                     .append(Component.text(") » ", NamedTextColor.GRAY))
                                                     .append(Component.text("Masuk sebagai ", NamedTextColor.GRAY))
-                                                    .append(Component.text(account.getUsername(), NamedTextColor.YELLOW))
+                                                    .append(Component.text(account.username(), NamedTextColor.YELLOW))
                                     );
 
                                     login(player, account);

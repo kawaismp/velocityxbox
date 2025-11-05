@@ -12,6 +12,9 @@ public class ConfigManager {
     private static final String DEFAULT_DB_NAME = "postgres";
     private static final String DEFAULT_DB_USER = "postgres";
     private static final String DEFAULT_DB_PASSWORD = "password";
+    private static final int DEFAULT_LINK_API_PORT = 8080;
+    private static final String DEFAULT_LINK_API_SECRET = "change_me_to_a_secure_random_string";
+    private static final int DEFAULT_LINK_CODE_EXPIRATION = 10;
 
     private final YamlDocument config;
 
@@ -68,5 +71,17 @@ public class ConfigManager {
 
     public String getDatabasePassword() {
         return config.getString(Route.from("database", "password"), DEFAULT_DB_PASSWORD);
+    }
+
+    public int getLinkApiPort() {
+        return config.getInt(Route.from("link-api-port"), DEFAULT_LINK_API_PORT);
+    }
+
+    public String getLinkApiSecret() {
+        return config.getString(Route.from("link-api-secret"), DEFAULT_LINK_API_SECRET);
+    }
+
+    public int getLinkCodeExpiration() {
+        return config.getInt(Route.from("link-code-expiration"), DEFAULT_LINK_CODE_EXPIRATION);
     }
 }
