@@ -183,6 +183,7 @@ public class PlayerLoginManager {
                         plugin.getLogger().info("Transferring {} to last server: {}", player.getUsername(), lastServer);
 
                         player.createConnectionRequest(targetServer).connect()
+                                .orTimeout(5, TimeUnit.SECONDS)
                                 .thenAccept(result -> {
                                     if (result.isSuccessful()) {
                                         player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
@@ -356,6 +357,7 @@ public class PlayerLoginManager {
                         plugin.getLogger().info("Transferring {} to last server: {}", player.getUsername(), lastServer);
 
                         player.createConnectionRequest(targetServer).connect()
+                                .orTimeout(5, TimeUnit.SECONDS)
                                 .thenAccept(result -> {
                                     if (result.isSuccessful()) {
                                         player.sendMessage(plugin.getMessageProvider().getPlayerTransferredLastServer());
