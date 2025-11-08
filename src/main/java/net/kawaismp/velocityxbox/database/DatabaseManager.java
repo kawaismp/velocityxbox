@@ -20,7 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class DatabaseManager {
-    private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE username = ?";
+    private static final String QUERY_GET_ACCOUNT = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE LOWER(username) = LOWER(?)";
     private static final String QUERY_GET_ACCOUNT_BY_ID = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE id = ?";
     private static final String QUERY_GET_ACCOUNT_BY_XUID = "SELECT id, username, discord_id FROM accounts WHERE xbox_user_id = ?";
     private static final String QUERY_GET_ACCOUNT_BY_DISCORD_ID = "SELECT id, username, password_hash, xbox_user_id, discord_id FROM accounts WHERE discord_id = ?";
@@ -426,4 +426,3 @@ public class DatabaseManager {
         return dataSource.getConnection();
     }
 }
-
