@@ -23,6 +23,7 @@ import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.GameProfileRequestEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerChatEvent;
+import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -42,8 +43,10 @@ import net.kawaismp.velocityxbox.command.RegisterCommand;
 import net.kawaismp.velocityxbox.command.UnlinkCommand;
 import net.kawaismp.velocityxbox.config.ConfigManager;
 import net.kawaismp.velocityxbox.database.DatabaseManager;
+import net.kawaismp.velocityxbox.event.PlayerLoginSuccessEvent;
 import net.kawaismp.velocityxbox.manager.LinkApiServer;
 import net.kawaismp.velocityxbox.manager.PlayerLoginManager;
+import net.kawaismp.velocityxbox.util.AutoLoginCache;
 import net.kawaismp.velocityxbox.util.LastServerCache;
 import net.kawaismp.velocityxbox.util.LinkCodeManager;
 import net.kawaismp.velocityxbox.util.LoginSessionCache;
@@ -77,6 +80,7 @@ public class VelocityXbox implements EventRegistrar {
     private RegistrationIpTracker registrationIpTracker;
     private LinkCodeManager linkCodeManager;
     private LinkApiServer linkApiServer;
+    private AutoLoginCache autoLoginCache;
 
     private volatile boolean geyserInitialized = false;
 
@@ -103,6 +107,7 @@ public class VelocityXbox implements EventRegistrar {
             this.registrationIpTracker = new RegistrationIpTracker(logger, dataDirectory);
             this.linkCodeManager = new LinkCodeManager(logger, configManager.getLinkCodeExpiration());
             this.linkApiServer = new LinkApiServer(this);
+            this.autoLoginCache = new AutoLoginCache();
 
             // Register with Geyser
             GeyserApi.api().eventBus().register(this, this);
@@ -242,20 +247,122 @@ public class VelocityXbox implements EventRegistrar {
             registrationIpTracker.shutdown();
         }
 
+        if (autoLoginCache != null) {
+            autoLoginCache.clear();
+        }
+
         logger.info("VelocityXbox plugin shut down successfully");
     }
 
     @Subscribe
     public void onGameProfileRequest(final GameProfileRequestEvent event) {
         String baseUsername = event.getUsername();
-        String randomUsername = loginManager.generateRandomUsername();
-        UUID originalUuid = UuidUtils.generateOfflinePlayerUuid(baseUsername);
+        UUID preLoginUuid = event.getGameProfile().getId(); // UUID before any authentication
         int protocolVersion = event.getConnection().getProtocolVersion().getProtocol();
+        
+        // Generate original offline UUID for this username (for session validation)
+        UUID originalUuid = UuidUtils.generateOfflinePlayerUuid(baseUsername);
 
-        // Check if UUID already exists and append number if needed
+        // First, try session-based auto-login
+        LoginSessionCache.SessionData sessionData = sessionCache.validateSession(
+                originalUuid,
+                protocolVersion,
+                event.getConnection().getRemoteAddress().getAddress(),
+                event.isOnlineMode()
+        );
+
+        if (sessionData != null) {
+            // Valid session found - perform auto-login
+            UUID accountUuid = UUID.fromString(sessionData.getAccountId());
+            String accountUsername = sessionData.getUsername();
+            
+            logger.info("Auto-login via session for {} (account: {})", baseUsername, accountUsername);
+            
+            // Set the game profile to the logged-in account
+            GameProfile loggedInProfile = new GameProfile(
+                    accountUuid,
+                    accountUsername,
+                    event.getGameProfile().getProperties()
+            );
+            event.setGameProfile(loggedInProfile);
+            
+            // Fetch full account data and cache for completion in ServerPostConnectEvent
+            databaseManager.getAccountById(sessionData.getAccountId())
+                    .thenAccept(accountOpt -> {
+                        if (accountOpt.isPresent()) {
+                            autoLoginCache.store(
+                                    accountUuid, 
+                                    accountOpt.get(), 
+                                    PlayerLoginSuccessEvent.LoginMethod.SESSION_CACHE,
+                                    originalUuid
+                            );
+                        } else {
+                            logger.warn("Session referenced non-existent account ID: {}", sessionData.getAccountId());
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Error fetching account data for session auto-login", ex);
+                        return null;
+                    });
+            
+            return; // Skip randomization
+        }
+
+        // Second, try Bedrock XUID-based auto-login
+        if (geyserInitialized && GeyserApi.api().isBedrockPlayer(preLoginUuid)) {
+            GeyserConnection connection = GeyserApi.api().connectionByUuid(preLoginUuid);
+            if (connection != null) {
+                String xuid = connection.xuid();
+                logger.info("Attempting Bedrock auto-login for {} with XUID {}", baseUsername, xuid);
+                
+                // Synchronously fetch account by XUID (this blocks the event, but it's quick)
+                try {
+                    java.util.Optional<net.kawaismp.velocityxbox.database.model.Account> accountOpt = 
+                            databaseManager.getAccountByXuid(xuid).get(5, java.util.concurrent.TimeUnit.SECONDS);
+                    
+                    if (accountOpt.isPresent()) {
+                        net.kawaismp.velocityxbox.database.model.Account account = accountOpt.get();
+                        UUID accountUuid = UUID.fromString(account.id());
+                        String accountUsername = account.username();
+                        
+                        logger.info("Found linked Bedrock account for XUID {}: {}", xuid, accountUsername);
+                        
+                        // Set the game profile to the logged-in account
+                        GameProfile loggedInProfile = new GameProfile(
+                                accountUuid,
+                                accountUsername,
+                                event.getGameProfile().getProperties()
+                        );
+                        event.setGameProfile(loggedInProfile);
+                        
+                        // Cache for completion in ServerPostConnectEvent
+                        autoLoginCache.store(
+                                accountUuid, 
+                                account, 
+                                PlayerLoginSuccessEvent.LoginMethod.XBOX_AUTO_LOGIN,
+                                originalUuid
+                        );
+                        
+                        return; // Skip randomization
+                    } else {
+                        logger.debug("No linked account found for XUID {}", xuid);
+                    }
+                } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException | InterruptedException e) {
+                    logger.error("Error during Bedrock auto-login for XUID {}", xuid, e);
+                    if (e instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    // Continue to randomization on error
+                }
+            }
+        }
+
+        // No auto-login - proceed with randomization
+        String randomUsername = loginManager.generateRandomUsername();
         UUID finalUuid = originalUuid;
         int suffix = 1;
 
+        // Check if UUID already exists and append number if needed
         while (proxy.getPlayer(finalUuid).isPresent()) {
             String suffixedUsername = baseUsername + suffix;
             finalUuid = UuidUtils.generateOfflinePlayerUuid(suffixedUsername);
@@ -276,6 +383,60 @@ public class VelocityXbox implements EventRegistrar {
         connectionData.storePending(randomUsername, originalUuid, baseUsername, protocolVersion);
 
         logger.debug("Stored pending connection data for random username: {} (original: {})", randomUsername, baseUsername);
+    }
+
+    @Subscribe
+    public void onPlayerChooseInitialServer(final PlayerChooseInitialServerEvent event) {
+        Player player = event.getPlayer();
+        UUID playerId = player.getInternalUniqueId();
+        
+        // Check if this player has auto-login data (was auto-logged in during GameProfileRequestEvent)
+        if (autoLoginCache.hasPendingAutoLogin(playerId)) {
+            // Player was auto-logged in, redirect them to hub or last server instead of auth server
+            UUID accountUuid = playerId; // For auto-logged players, playerId is the account UUID
+            
+            // Try to get last server from cache
+            String lastServer = lastServerCache.get(accountUuid);
+            
+            // Determine target server
+            String targetServerName;
+            if (lastServer != null && !lastServer.isEmpty()) {
+                // Check if last server is not a special server (hub or auth)
+                String hubServer = configManager.getHubServer();
+                String authServer = configManager.getAuthServer();
+                boolean isSpecialServer = lastServer.equalsIgnoreCase(hubServer) || lastServer.equalsIgnoreCase(authServer);
+                
+                if (!isSpecialServer) {
+                    // Use last server if it's not a special server
+                    targetServerName = lastServer;
+                    logger.info("Redirecting auto-logged player {} to last server: {}", player.getUsername(), lastServer);
+                } else {
+                    // Last server was special, go to hub instead
+                    targetServerName = hubServer;
+                    lastServerCache.remove(accountUuid);
+                    logger.info("Redirecting auto-logged player {} to hub (last server was special)", player.getUsername());
+                }
+            } else {
+                // No last server, go to hub
+                targetServerName = configManager.getHubServer();
+                logger.info("Redirecting auto-logged player {} to hub (no last server)", player.getUsername());
+            }
+            
+            // Set the initial server
+            proxy.getServer(targetServerName).ifPresentOrElse(
+                    server -> {
+                        event.setInitialServer(server);
+                        logger.debug("Set initial server for {} to {}", player.getUsername(), targetServerName);
+                    },
+                    () -> {
+                        logger.warn("Target server '{}' not found for auto-logged player {}, using default", 
+                                targetServerName, player.getUsername());
+                        // Fall back to hub if target server doesn't exist
+                        proxy.getServer(configManager.getHubServer()).ifPresent(event::setInitialServer);
+                    }
+            );
+        }
+        // If player is not auto-logged in, they will go to the default initial server (auth server)
     }
 
     @Subscribe
@@ -355,6 +516,21 @@ public class VelocityXbox implements EventRegistrar {
         Player player = event.getPlayer();
         UUID playerId = player.getInternalUniqueId();
 
+        // Check if this player was auto-logged in during GameProfileRequestEvent
+        AutoLoginCache.AutoLoginData autoLoginData = autoLoginCache.retrieve(playerId);
+        
+        if (autoLoginData != null) {
+            // Player was auto-logged in, complete the login process
+            logger.info("Completing auto-login for player {} via {}", 
+                    player.getUsername(), autoLoginData.getLoginMethod());
+            
+            // Complete the login using the PlayerLoginManager
+            loginManager.completeAutoLogin(player, autoLoginData.getAccount(), 
+                    autoLoginData.getLoginMethod(), autoLoginData.getOriginalUuid());
+            return;
+        }
+
+        // Player was not auto-logged in, check if already logged in (shouldn't happen but safety check)
         if (loginManager.isLogged(playerId)) {
             return;
         }
@@ -369,36 +545,9 @@ public class VelocityXbox implements EventRegistrar {
             logger.warn("No pending connection data found for player {} (internal UUID: {})", currentUsername, playerId);
         }
 
-        // Try to get original UUID and check for cached session
-        UUID originalUuid = connectionData.getOriginalUuid(playerId);
-        if (originalUuid != null) {
-            LoginSessionCache.SessionData sessionData = sessionCache.validateSession(
-                    originalUuid,
-                    player.getProtocolVersion().getProtocol(),
-                    player.getRemoteAddress().getAddress(),
-                    player.isOnlineMode()
-            );
-
-            if (sessionData != null) {
-                // Valid session found, auto-login the player
-                logger.info("Auto-logging in player {} from cached session", sessionData.getUsername());
-                loginManager.loginFromSession(player, sessionData);
-                return;
-            }
-        }
-
-        // No valid session, proceed with normal login flow
+        // Proceed with normal login flow
         loginManager.scheduleLoginTasks(player);
         loginManager.showLoginTitle(player);
-
-        // Auto-login for linked Bedrock players
-        if (GeyserApi.api().isBedrockPlayer(player.getUniqueId())) {
-            GeyserConnection connection = GeyserApi.api().connectionByUuid(player.getUniqueId());
-            if (connection != null) {
-                String xuid = connection.xuid();
-                loginManager.attemptAutoLogin(player, xuid);
-            }
-        }
     }
 
     @Subscribe
@@ -452,6 +601,9 @@ public class VelocityXbox implements EventRegistrar {
 
         // Remove connection data mapping
         connectionData.remove(playerId);
+
+        // Remove any pending auto-login data (in case player disconnected before ServerPostConnectEvent)
+        autoLoginCache.remove(playerId);
 
         // Reset login state (unless it's a conflicting login)
         if (event.getLoginStatus() != DisconnectEvent.LoginStatus.CONFLICTING_LOGIN) {
@@ -516,5 +668,10 @@ public class VelocityXbox implements EventRegistrar {
     // Getter for linkApiServer
     public LinkApiServer getLinkApiServer() {
         return linkApiServer;
+    }
+
+    // Getter for autoLoginCache
+    public AutoLoginCache getAutoLoginCache() {
+        return autoLoginCache;
     }
 }

@@ -218,6 +218,86 @@ public class PlayerLoginManager {
     }
 
     /**
+     * Complete auto-login for a player (called from ServerPostConnectEvent after GameProfileRequestEvent auto-login)
+     * This handles the parts that require a Player object (messages, sounds, transfers)
+     */
+    public void completeAutoLogin(Player player, Account account, PlayerLoginSuccessEvent.LoginMethod loginMethod, UUID originalUuid) {
+        UUID playerId = player.getInternalUniqueId();
+        
+        plugin.getLogger().info("Completing auto-login for player {} as {} via {}", 
+                player.getUsername(), account.username(), loginMethod);
+
+        // Add to logged in set
+        loggedInPlayers.add(playerId);
+        
+        // Store account ID for session caching
+        accountIds.put(playerId, account.id());
+
+        // Store connection data mapping for session caching on disconnect
+        // For auto-logged players, the internalUuid is the account UUID, so we map it to the originalUuid
+        plugin.getConnectionData().store(playerId, originalUuid, account.username(), player.getProtocolVersion().getProtocol());
+
+        // Note: Profile was already set in GameProfileRequestEvent, no need to update it again
+
+        // Play success sound and show messages
+        playSuccessSound(player);
+        
+        // Send appropriate auto-login messages based on method
+        if (loginMethod == PlayerLoginSuccessEvent.LoginMethod.SESSION_CACHE) {
+            player.sendMessage(plugin.getMessageProvider().getSessionLoginSuccess());
+        } else if (loginMethod == PlayerLoginSuccessEvent.LoginMethod.XBOX_AUTO_LOGIN) {
+            player.sendMessage(plugin.getMessageProvider().getAutoLoginSuccess());
+            player.sendMessage(
+                    Component.text("(", NamedTextColor.GRAY)
+                            .append(Component.text("!", NamedTextColor.AQUA))
+                            .append(Component.text(") » ", NamedTextColor.GRAY))
+                            .append(Component.text("Masuk sebagai ", NamedTextColor.GRAY))
+                            .append(Component.text(account.username(), NamedTextColor.YELLOW))
+            );
+        }
+
+        showWelcomeTitle(player, account.username());
+
+        // Fire PlayerLoginSuccessEvent
+        PlayerLoginSuccessEvent loginEvent = new PlayerLoginSuccessEvent(
+                player,
+                account,
+                loginMethod
+        );
+        plugin.getProxy().getEventManager().fireAndForget(loginEvent);
+
+        // Start verification reminder task if account is not verified
+        startVerificationReminderTask(player, account);
+
+        // Player was already redirected to the correct server via PlayerChooseInitialServerEvent
+        // Just clean up the last server cache after a delay
+        plugin.getProxy().getScheduler()
+                .buildTask(plugin, () -> {
+                    try {
+                        // Verify player is still online
+                        if (!player.isActive() || player.getCurrentServer().isEmpty()) {
+                            plugin.getLogger().warn("Player {} disconnected after auto-login", player.getUsername());
+                            return;
+                        }
+
+                        UUID accountId = UUID.fromString(account.id());
+                        String currentServer = player.getCurrentServer()
+                                .map(server -> server.getServerInfo().getName())
+                                .orElse("unknown");
+
+                        plugin.getLogger().info("Auto-logged player {} is now on server: {}", player.getUsername(), currentServer);
+                        
+                        // Clean up last server cache entry if it was used
+                        plugin.getLastServerCache().remove(accountId);
+                    } catch (Exception e) {
+                        plugin.getLogger().error("Error during post-auto-login cleanup for {}", player.getUsername(), e);
+                    }
+                })
+                .delay(LOGIN_SOUND_DELAY_MS, TimeUnit.MILLISECONDS)
+                .schedule();
+    }
+
+    /**
      * Log out player
      */
     public void logout(Player player) {
